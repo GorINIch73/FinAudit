@@ -1,4 +1,4 @@
-#include "ServiceView.h"
+#include "ContractRegistryNumbersView.h"
 #include "../UIManager.h"
 #include "../ExportManager.h"
 #include "../IconsFontAwesome6.h"
@@ -6,20 +6,20 @@
 #include "ImGuiFileDialog.h"
 #include <thread>
 
-ServiceView::ServiceView() {
-    Title = "Сервис";
+ContractRegistryNumbersView::ContractRegistryNumbersView() {
+    Title = "Реестровые номера контрактов";
     Reset();
 }
 
-void ServiceView::SetUIManager(UIManager* manager) {
+void ContractRegistryNumbersView::SetUIManager(UIManager* manager) {
     uiManager = manager;
 }
 
-void ServiceView::SetExportManager(ExportManager* manager) {
+void ContractRegistryNumbersView::SetExportManager(ExportManager* manager) {
     exportManager = manager;
 }
 
-void ServiceView::Reset() {
+void ContractRegistryNumbersView::Reset() {
     m_unfoundContracts.clear();
     m_successfulImports = 0;
     m_ikzImportStarted = false;
@@ -27,16 +27,29 @@ void ServiceView::Reset() {
     m_lastExportCount = -1;
 }
 
-void ServiceView::StartIKZImport(const std::string& filePath, ImportManager* importManager,
+void ContractRegistryNumbersView::StartIKZImport(const std::string& filePath, ImportManager* importManager,
                                   DatabaseManager* dbManager, std::atomic<float>& progress,
                                   std::string& message, std::mutex& mutex, std::atomic<bool>& isImporting) {
+    std::string backupPath;
+    if (!uiManager || !uiManager->BackupCurrentDatabase("import_registry_numbers", backupPath)) {
+        std::lock_guard<std::mutex> lock(mutex);
+        progress = 0.0f;
+        message = "Ошибка: не удалось создать резервную копию перед импортом реестровых номеров.";
+        return;
+    }
+
     m_ikzImportStarted = true;
     isImporting = true;
     m_showUnfoundContracts = true;
     m_unfoundContracts.clear();
     m_successfulImports = 0;
 
-    std::thread([this, filePath, importManager, dbManager, &progress, &message, &mutex, &isImporting]() {
+    std::thread([this, filePath, importManager, dbManager, &progress, &message, &mutex, &isImporting, backupPath]() {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            progress = 0.0f;
+            message = "Резервная копия создана: " + backupPath;
+        }
         importManager->importIKZFromFile(
             filePath,
             dbManager,
@@ -51,7 +64,7 @@ void ServiceView::StartIKZImport(const std::string& filePath, ImportManager* imp
     }).detach();
 }
 
-void ServiceView::StartContractsExport(const std::string& filePath, ExportManager* exportManager,
+void ContractRegistryNumbersView::StartContractsExport(const std::string& filePath, ExportManager* exportManager,
                                         std::atomic<float>& progress, std::string& message,
                                         std::mutex& mutex, std::atomic<bool>& isImporting) {
     isImporting = true;
@@ -60,7 +73,7 @@ void ServiceView::StartContractsExport(const std::string& filePath, ExportManage
         {
             std::lock_guard<std::mutex> lock(mutex);
             progress = 0.5f;
-            message = "Экспорт договоров...";
+            message = "Экспорт реестровых номеров контрактов...";
         }
 
         int exportedCount = 0;
@@ -80,25 +93,25 @@ void ServiceView::StartContractsExport(const std::string& filePath, ExportManage
     }).detach();
 }
 
-void ServiceView::Render() {
+void ContractRegistryNumbersView::Render() {
     if (!IsVisible) {
         return;
     }
 
     ImGui::SetNextWindowSize(ImVec2(700, 650), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(Title.c_str(), &IsVisible)) {
-        // --- IKZ Import Section ---
-        ImGui::TextUnformatted("Импорт ИКЗ из файла (Колонки: Номер, Дата, ИКЗ)");
+        // --- Procurement registry number import section ---
+        ImGui::TextUnformatted("Импорт реестровых номеров контрактов из файла (колонки: номер, дата, реестровый номер)");
         ImGui::Spacing();
         
         ImGui::BeginDisabled(uiManager->isImporting);
 
-        if (ImGui::Button(ICON_FA_FILE_IMPORT " Импортировать ИКЗ")) {
+        if (ImGui::Button(ICON_FA_FILE_IMPORT " Импортировать реестровые номера")) {
             IGFD::FileDialogConfig config;
             config.path = ".";
             config.countSelectionMax = 1;
             config.userDatas = IGFD::UserDatas(nullptr);
-            ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey_IKZ_Service", "Выберите файл для импорта ИКЗ", ".csv,.tsv", config);
+            ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey_IKZ_Service", "Выберите файл с реестровыми номерами контрактов", ".csv,.tsv", config);
         }
 
         ImGui::EndDisabled();
@@ -107,14 +120,14 @@ void ServiceView::Render() {
             ImGui::Spacing();
             ImGui::Separator();
             
-            if (ImGui::Button("Очистить результаты импорта ИКЗ")) {
+            if (ImGui::Button("Очистить результаты импорта")) {
                 m_showUnfoundContracts = false;
                 m_unfoundContracts.clear();
                 m_successfulImports = 0;
             }
 
             if (!m_ikzImportStarted && !uiManager->isImporting) {
-                ImGui::Text("Импортировано записей: %d", m_successfulImports);
+                ImGui::Text("Импортировано реестровых номеров: %d", m_successfulImports);
                 ImGui::Text("Не найдено контрактов: %zu", m_unfoundContracts.size());
             }
 
@@ -123,7 +136,7 @@ void ServiceView::Render() {
                 if (ImGui::BeginTable("unfound_contracts_table_service", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 150))) {
                     ImGui::TableSetupColumn("Номер контракта");
                     ImGui::TableSetupColumn("Дата контракта");
-                    ImGui::TableSetupColumn("ИКЗ из файла");
+                    ImGui::TableSetupColumn("Реестровый номер из файла");
                     ImGui::TableHeadersRow();
 
                     for (const auto& contract : m_unfoundContracts) {
@@ -141,24 +154,24 @@ void ServiceView::Render() {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // --- Contract Export Section ---
-        ImGui::TextUnformatted("Экспорт договоров для проверки");
+        // --- Procurement registry number export section ---
+        ImGui::TextUnformatted("Экспорт реестровых номеров контрактов");
         ImGui::Spacing();
 
         ImGui::BeginDisabled(uiManager->isImporting);
 
-        if (ImGui::Button(ICON_FA_FILE_EXPORT " Экспортировать договоры")) {
+        if (ImGui::Button(ICON_FA_FILE_EXPORT " Экспортировать реестровые номера")) {
             m_lastExportCount = -1; // Reset on new export
             IGFD::FileDialogConfig config;
             config.path = ".";
             config.countSelectionMax = 1;
             config.userDatas = IGFD::UserDatas(nullptr);
-            ImGuiFileDialog::Instance()->OpenDialog("ExportContractsDlgKey", "Экспорт договоров для проверки", ".csv", config);
+            ImGuiFileDialog::Instance()->OpenDialog("ExportContractsDlgKey", "Экспорт реестровых номеров контрактов", ".csv", config);
         }
         
         if (m_lastExportCount != -1) {
             ImGui::SameLine();
-            ImGui::Text("Экспортировано %d договоров.", m_lastExportCount);
+            ImGui::Text("Экспортировано %d контрактов.", m_lastExportCount);
         }
 
         ImGui::EndDisabled();
@@ -166,7 +179,7 @@ void ServiceView::Render() {
     ImGui::End();
 }
 
-std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>> ServiceView::GetDataAsStrings() {
+std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>> ContractRegistryNumbersView::GetDataAsStrings() {
     // This view doesn't present tabular data for export, so return empty.
     return {};
 }

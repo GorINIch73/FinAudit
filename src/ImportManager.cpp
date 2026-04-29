@@ -1,5 +1,6 @@
 #include "ImportManager.h"
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <iostream>
 #include <iomanip>
@@ -16,11 +17,41 @@ ImportManager::ImportManager() {}
 static std::vector<std::string> split(const std::string &s, char delimiter) {
     std::vector<std::string> tokens;
     std::string token;
-    std::istringstream tokenStream(s);
-    while (std::getline(tokenStream, token, delimiter)) {
-        tokens.push_back(token);
+
+    bool in_quotes = false;
+    for (size_t i = 0; i < s.size(); ++i) {
+        char c = s[i];
+        if (c == '"') {
+            if (in_quotes && i + 1 < s.size() && s[i + 1] == '"') {
+                token.push_back('"');
+                ++i;
+            } else {
+                in_quotes = !in_quotes;
+            }
+        } else if (c == delimiter && !in_quotes) {
+            tokens.push_back(token);
+            token.clear();
+        } else {
+            token.push_back(c);
+        }
     }
+    tokens.push_back(token);
     return tokens;
+}
+
+static char detectDelimiter(const std::string &header_line) {
+    size_t tab_count = std::count(header_line.begin(), header_line.end(), '\t');
+    size_t semicolon_count =
+        std::count(header_line.begin(), header_line.end(), ';');
+    size_t comma_count = std::count(header_line.begin(), header_line.end(), ',');
+
+    if (tab_count >= semicolon_count && tab_count >= comma_count && tab_count > 0) {
+        return '\t';
+    }
+    if (semicolon_count >= comma_count && semicolon_count > 0) {
+        return ';';
+    }
+    return ',';
 }
 
 // Helper to trim whitespace only
@@ -72,6 +103,96 @@ static std::string convertDateToDBFormat(const std::string &date_str_in) {
                date_str.substr(0, 2);
     }
     return date_str; // Return as is if format is unexpected
+}
+
+static std::string normalizeAmountString(const std::string &amount_str) {
+    std::string normalized;
+    normalized.reserve(amount_str.size());
+
+    bool decimal_added = false;
+    for (size_t i = 0; i < amount_str.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(amount_str[i]);
+
+        if (std::isdigit(c)) {
+            normalized.push_back(static_cast<char>(c));
+            continue;
+        }
+
+        if (c == '-' && normalized.empty()) {
+            normalized.push_back('-');
+            continue;
+        }
+
+        if ((c == ',' || c == '.' || c == '=' ||
+             (c == '-' && !normalized.empty())) &&
+            !decimal_added) {
+            normalized.push_back('.');
+            decimal_added = true;
+            continue;
+        }
+
+        if (std::isspace(c)) {
+            continue;
+        }
+
+        // UTF-8 non-breaking spaces used in exported reports.
+        if (i + 1 < amount_str.size() && c == 0xC2 &&
+            static_cast<unsigned char>(amount_str[i + 1]) == 0xA0) {
+            ++i;
+            continue;
+        }
+        if (i + 2 < amount_str.size() && c == 0xE2 &&
+            static_cast<unsigned char>(amount_str[i + 1]) == 0x80 &&
+            static_cast<unsigned char>(amount_str[i + 2]) == 0xAF) {
+            i += 2;
+            continue;
+        }
+    }
+
+    return normalized;
+}
+
+static bool parseAmount(const std::string &amount_str, double &amount) {
+    bool negative_parentheses =
+        amount_str.find('(') != std::string::npos &&
+        amount_str.find(')') != std::string::npos;
+
+    std::string normalized = normalizeAmountString(amount_str);
+    if (normalized.empty() || normalized == "-" || normalized == ".") {
+        return false;
+    }
+
+    try {
+        amount = std::stod(normalized);
+        if (negative_parentheses && amount > 0.0) {
+            amount *= -1.0;
+        }
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+static std::string extractKosguCodeFromAccount(const std::string &account) {
+    int digit_count = 0;
+    std::string reversed_digits;
+
+    for (auto it = account.rbegin(); it != account.rend(); ++it) {
+        unsigned char c = static_cast<unsigned char>(*it);
+        if (std::isdigit(c)) {
+            reversed_digits.push_back(static_cast<char>(c));
+            digit_count++;
+            if (digit_count == 3) {
+                std::reverse(reversed_digits.begin(), reversed_digits.end());
+                return reversed_digits;
+            }
+        } else {
+            digit_count = 0;
+            reversed_digits.clear();
+        }
+    }
+
+    return "";
 }
 
 bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
@@ -129,6 +250,76 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
         return false;
     }
 
+    std::map<std::string, int> counterparty_cache;
+    std::map<std::string, int> contract_cache;
+    std::map<std::string, int> kosgu_cache;
+
+    auto get_or_create_counterparty_id = [&](const std::string& name) {
+        if (name.empty()) {
+            return -1;
+        }
+
+        auto cache_it = counterparty_cache.find(name);
+        if (cache_it != counterparty_cache.end()) {
+            return cache_it->second;
+        }
+
+        int id = dbManager->getCounterpartyIdByName(name);
+        if (id == -1) {
+            Counterparty counterparty;
+            counterparty.name = name;
+            if (dbManager->addCounterparty(counterparty)) {
+                id = counterparty.id;
+            }
+        }
+        counterparty_cache[name] = id;
+        return id;
+    };
+
+    auto get_or_create_contract_id = [&](const std::string& number,
+                                         const std::string& date,
+                                         int counterparty_id) {
+        if (number.empty() || date.empty()) {
+            return -1;
+        }
+
+        std::string key =
+            number + "|" + date + "|" + std::to_string(counterparty_id);
+        auto cache_it = contract_cache.find(key);
+        if (cache_it != contract_cache.end()) {
+            return cache_it->second;
+        }
+
+        int id = dbManager->getContractIdByNumberDate(number, date);
+        if (id == -1) {
+            Contract contract_obj{-1, number, date, counterparty_id};
+            id = dbManager->addContract(contract_obj);
+        }
+        contract_cache[key] = id;
+        return id;
+    };
+
+    auto get_or_create_kosgu_id = [&](const std::string& code) {
+        if (code.empty()) {
+            return -1;
+        }
+
+        auto cache_it = kosgu_cache.find(code);
+        if (cache_it != kosgu_cache.end()) {
+            return cache_it->second;
+        }
+
+        int id = dbManager->getKosguIdByCode(code);
+        if (id == -1) {
+            Kosgu new_kosgu{-1, code, "КОСГУ " + code};
+            if (dbManager->addKosguEntry(new_kosgu)) {
+                id = new_kosgu.id;
+            }
+        }
+        kosgu_cache[code] = id;
+        return id;
+    };
+
     size_t line_num = 0;
     while (std::getline(file, line)) {
         // Check for cancellation
@@ -176,11 +367,8 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
             }
         }
 
-        try {
-            std::string amount_str = get_value_from_row(row, mapping, "Сумма");
-            std::replace(amount_str.begin(), amount_str.end(), ',', '.');
-            payment.amount = std::stod(amount_str);
-        } catch (const std::exception &) {
+        std::string amount_str = get_value_from_row(row, mapping, "Сумма");
+        if (!parseAmount(amount_str, payment.amount)) {
             payment.amount = 0.0;
         }
 
@@ -198,23 +386,13 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
         }
 
 
-        Counterparty counterparty;
+        std::string counterparty_name;
         if (payment.type) { // true is income
-            counterparty.name = local_payer_name;
+            counterparty_name = local_payer_name;
         } else {
-            counterparty.name = payment.recipient;
+            counterparty_name = payment.recipient;
         }
-
-        int counterparty_id = -1;
-        if (!counterparty.name.empty()) {
-            counterparty_id =
-                dbManager->getCounterpartyIdByName(counterparty.name);
-            if (counterparty_id == -1) {
-                if (dbManager->addCounterparty(counterparty)) {
-                    counterparty_id = counterparty.id;
-                }
-            }
-        }
+        int counterparty_id = get_or_create_counterparty_id(counterparty_name);
         payment.counterparty_id = counterparty_id;
 
         int current_contract_id = -1;
@@ -225,17 +403,8 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
                 std::string contract_number = contract_matches[1].str();
                 std::string contract_date_db_format =
                     convertDateToDBFormat(contract_matches[2].str());
-                current_contract_id = dbManager->getContractIdByNumberDate(
-                    contract_number, contract_date_db_format);
-                if (current_contract_id == -1) {
-                    Contract contract_obj{-1, contract_number,
-                                          contract_date_db_format,
-                                          counterparty_id};
-                    int new_contract_id = dbManager->addContract(contract_obj);
-                    if (new_contract_id != -1) {
-                        current_contract_id = new_contract_id;
-                    }
-                }
+                current_contract_id = get_or_create_contract_id(
+                    contract_number, contract_date_db_format, counterparty_id);
             }
         }
 
@@ -258,7 +427,7 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
 
         if (special_pos != std::string::npos) {
             std::string details_part = payment.description.substr(special_pos + special_pattern_prefix.length());
-            std::regex special_kosgu_regex("К(\\d{3})=([\\d.]+)");
+            std::regex special_kosgu_regex("К(\\d{3})=([\\d\\s,=.-]+)");
             auto details_begin = std::sregex_iterator(details_part.begin(), details_part.end(), special_kosgu_regex);
             auto details_end = std::sregex_iterator();
             
@@ -271,16 +440,10 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
                     std::string kosgu_code = match[1].str();
                     std::string amount_str = match[2].str();
                     
-                    int kosgu_id = dbManager->getKosguIdByCode(kosgu_code);
-                    if (kosgu_id == -1) {
-                        Kosgu new_kosgu{-1, kosgu_code, "КОСГУ " + kosgu_code};
-                        if (dbManager->addKosguEntry(new_kosgu)) {
-                            kosgu_id = dbManager->getKosguIdByCode(kosgu_code);
-                        }
-                    }
+                    int kosgu_id = get_or_create_kosgu_id(kosgu_code);
 
-                    try {
-                        double detail_amount = std::stod(amount_str);
+                    double detail_amount = 0.0;
+                    if (parseAmount(amount_str, detail_amount)) {
                         total_details_amount += detail_amount;
                         
                         PaymentDetail detail;
@@ -289,7 +452,7 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
                         detail.contract_id = current_contract_id;
                         detail.amount = detail_amount;
                         details_to_add.push_back(detail);
-                    } catch (const std::exception& e) {
+                    } else {
                         total_details_amount = payment.amount + 1; // Force validation fail
                         break;
                     }
@@ -316,13 +479,7 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
             if (!kosgu_regex_str.empty() && std::regex_search(payment.description, kosgu_matches, kosgu_regex)) {
                 if (kosgu_matches.size() > 1) { // Assuming the code is in the first capture group
                     std::string kosgu_code = kosgu_matches[1].str();
-                    kosgu_id_from_regex = dbManager->getKosguIdByCode(kosgu_code);
-                    if (kosgu_id_from_regex == -1) {
-                        Kosgu new_kosgu{-1, kosgu_code, "КОСГУ " + kosgu_code};
-                        if (dbManager->addKosguEntry(new_kosgu)) {
-                            kosgu_id_from_regex = dbManager->getKosguIdByCode(kosgu_code);
-                        }
-                    }
+                    kosgu_id_from_regex = get_or_create_kosgu_id(kosgu_code);
                 }
             }
             detail.kosgu_id = kosgu_id_from_regex;
@@ -549,14 +706,37 @@ bool ImportManager::ImportJournalOrder4FromTsv(
 
     std::string line;
     std::getline(file, line); // Пропуск заголовка
+    char delimiter = detectDelimiter(line);
 
     importedDocuments = 0;
     importedDetails = 0;
     errors.clear();
     size_t line_num = 0;
 
-    // Карта для отслеживания созданных документов (key: number+date)
+    // Кэши на время импорта, чтобы не делать одинаковые SELECT на каждой строке.
     std::map<std::string, int> doc_cache;
+    std::map<std::string, int> kosgu_cache;
+
+    auto get_or_create_kosgu_id = [&](const std::string& code) {
+        if (code.empty()) {
+            return -1;
+        }
+
+        auto cache_it = kosgu_cache.find(code);
+        if (cache_it != kosgu_cache.end()) {
+            return cache_it->second;
+        }
+
+        int id = dbManager->getKosguIdByCode(code);
+        if (id == -1) {
+            Kosgu new_kosgu{-1, code, "КОСГУ " + code};
+            if (dbManager->addKosguEntry(new_kosgu)) {
+                id = new_kosgu.id;
+            }
+        }
+        kosgu_cache[code] = id;
+        return id;
+    };
 
     if (!dbManager->beginTransaction()) {
         std::lock_guard<std::mutex> lock(message_mutex);
@@ -611,7 +791,7 @@ bool ImportManager::ImportJournalOrder4FromTsv(
 
         if (line.empty()) continue;
 
-        std::vector<std::string> row = split(line, '\t');
+        std::vector<std::string> row = split(line, delimiter);
 
         // Извлекаем поля
         std::string doc_date = get_jo4_value(row, mapping, "Дата документа");
@@ -635,34 +815,29 @@ bool ImportManager::ImportJournalOrder4FromTsv(
         strip_invisible(counterparty_name);
 
         double amount = 0.0;
-        try {
-            // Заменяем запятую на точку
-            std::replace(amount_str.begin(), amount_str.end(), ',', '.');
-            amount = std::stod(amount_str);
-        } catch (...) {
+        if (!parseAmount(amount_str, amount)) {
             errors.push_back("Строка " + std::to_string(line_num) + ": неверная сумма '" + amount_str + "'");
             continue;
         }
 
-        // Поиск или создание контрагента
-        int counterparty_id = -1;
-        if (!counterparty_name.empty()) {
-            counterparty_id = dbManager->getCounterpartyIdByName(counterparty_name);
-            if (counterparty_id == -1) {
-                Counterparty new_cp{-1, counterparty_name, ""};
-                counterparty_id = dbManager->addCounterparty(new_cp);
-            }
-        }
-
         // Поиск или создание документа основания
         int doc_id = -1;
-        std::string cache_key = doc_number + "|" + date_db;
+        std::string cache_key =
+            doc_number + "|" + date_db + "|" + doc_name + "|" + counterparty_name;
 
         auto cache_it = doc_cache.find(cache_key);
         if (cache_it != doc_cache.end()) {
             doc_id = cache_it->second;
         } else {
-            doc_id = dbManager->getBasePaymentDocumentIdByNumberDate(doc_number, date_db);
+            doc_id = dbManager->getBasePaymentDocumentIdBySignature(
+                doc_number, date_db, doc_name, counterparty_name);
+            if (doc_id == -1 && !doc_name.empty() && !counterparty_name.empty()) {
+                doc_id = dbManager->getBasePaymentDocumentIdByNumberDate(
+                    doc_number, date_db);
+            }
+            if (doc_id != -1) {
+                doc_cache[cache_key] = doc_id;
+            }
         }
 
         if (doc_id == -1 && !doc_number.empty() && !date_db.empty()) {
@@ -692,10 +867,16 @@ bool ImportManager::ImportJournalOrder4FromTsv(
 
             // Автоопределение КОСГУ по счёту дебета
             if (!debit_account.empty()) {
-                // Поиск КОСГУ по коду (например, "201" -> КОСГУ 201)
-                std::string kosgu_code = debit_account.substr(0, 3);
-                int kosgu_id = dbManager->getKosguIdByCode(kosgu_code);
-                new_detail.kosgu_id = kosgu_id;
+                std::string kosgu_code = extractKosguCodeFromAccount(debit_account);
+                if (!kosgu_code.empty()) {
+                    new_detail.kosgu_id = get_or_create_kosgu_id(kosgu_code);
+                }
+            }
+
+            int existing_detail_id =
+                dbManager->getBasePaymentDocumentDetailIdBySignature(new_detail);
+            if (existing_detail_id != -1) {
+                continue;
             }
 
             if (dbManager->addBasePaymentDocumentDetail(new_detail)) {

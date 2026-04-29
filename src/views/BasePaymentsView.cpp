@@ -392,7 +392,7 @@ void BasePaymentsView::Render() {
                 ImGui::Text("Минимальный процент совпадения:");
                 ImGui::SetNextItemWidth(120);
                 ImGui::SliderInt("##MinScore", &group_auto_match_min_score, 10, 100, "%d%%");
-                ImGui::Checkbox("Обязательное совпадение по контрагенту",
+                ImGui::Checkbox("Учитывать различие контрагентов как штраф",
                                 &group_auto_match_require_counterparty);
             }
 
@@ -658,7 +658,7 @@ void BasePaymentsView::Render() {
         bool open = true;
         if (ImGui::Begin("Результаты автоподбора платежа", &open,
                          ImGuiWindowFlags_NoCollapse)) {
-            ImGui::Checkbox("Обязательное совпадение по контрагенту",
+            ImGui::Checkbox("Учитывать различие контрагентов как штраф",
                             &group_auto_match_require_counterparty);
             ImGui::SameLine();
             if (ImGui::Button("Пересчитать")) {

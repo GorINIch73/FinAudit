@@ -1,4 +1,5 @@
 #include "views/SelectiveCleanView.h"
+#include "../UIManager.h"
 #include "imgui.h"
 #include <string>
 #include "../CustomWidgets.h" // Добавлено для CustomWidgets::ConfirmationModal
@@ -10,7 +11,50 @@ void SelectiveCleanView::Render() {
 
     ImGui::Begin(GetTitle(), &IsVisible);
 
-    ImGui::TextWrapped("Эта форма позволяет выборочно удалять данные из базы. Эти операции необратимы. Рекомендуется создать резервную копию файла базы данных перед продолжением.");
+    ImGui::TextWrapped("Эта форма позволяет проверять целостность базы и выборочно удалять данные. Перед каждой операцией очистки автоматически создается резервная копия рядом с текущей базой.");
+    ImGui::Separator();
+
+    ImGui::Text("Проверка целостности:");
+    ImGui::BeginDisabled(!dbManager || !dbManager->is_open());
+    if (ImGui::Button(ICON_FA_DATABASE " Проверить базу")) {
+        integrityIssues = dbManager->getIntegrityReport();
+        showIntegrityReport = true;
+    }
+    ImGui::EndDisabled();
+
+    if (showIntegrityReport) {
+        ImGui::SameLine();
+        if (ImGui::Button("Скрыть результат")) {
+            showIntegrityReport = false;
+        }
+
+        if (ImGui::BeginTable("db_operations_integrity_report", 3,
+                              ImGuiTableFlags_Borders |
+                                  ImGuiTableFlags_RowBg |
+                                  ImGuiTableFlags_ScrollY |
+                                  ImGuiTableFlags_Resizable,
+                              ImVec2(0, 220))) {
+            ImGui::TableSetupColumn("Статус", ImGuiTableColumnFlags_WidthFixed,
+                                    110.0f);
+            ImGui::TableSetupColumn("Проверка", ImGuiTableColumnFlags_WidthFixed,
+                                    220.0f);
+            ImGui::TableSetupColumn("Детали");
+            ImGui::TableHeadersRow();
+
+            for (const auto& issue : integrityIssues) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(issue.severity.c_str());
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(issue.check_name.c_str());
+                ImGui::TableNextColumn();
+                ImGui::TextWrapped("%s", issue.details.c_str());
+            }
+
+            ImGui::EndTable();
+        }
+    }
+
     ImGui::Separator();
 
     ImGui::Text("Очистка основных таблиц:");
@@ -64,18 +108,21 @@ void SelectiveCleanView::Render() {
 void SelectiveCleanView::ShowConfirmationModal() {
     if (CustomWidgets::ConfirmationModal("ConfirmationModal", "Подтверждение операции", confirmationMessage.c_str(), "Да, я уверен", "Отмена", show_confirmation_modal_internal)) {
         bool success = false;
+        std::string backupPath;
         if (dbManager) {
-            switch (currentCleanTarget) {
-                case CleanTarget::Payments:       success = dbManager->ClearPayments(); break;
-                case CleanTarget::Counterparties: success = dbManager->ClearCounterparties(); break;
-                case CleanTarget::Contracts:      success = dbManager->ClearContracts(); break;
-                case CleanTarget::BasePaymentDocuments: success = dbManager->ClearBasePaymentDocuments(); break;
-                case CleanTarget::OrphanDetails:  success = dbManager->CleanOrphanPaymentDetails(); break;
-                case CleanTarget::None: break;
+            if (BackupBeforeDangerousOperation(backupPath)) {
+                switch (currentCleanTarget) {
+                    case CleanTarget::Payments:       success = dbManager->ClearPayments(); break;
+                    case CleanTarget::Counterparties: success = dbManager->ClearCounterparties(); break;
+                    case CleanTarget::Contracts:      success = dbManager->ClearContracts(); break;
+                    case CleanTarget::BasePaymentDocuments: success = dbManager->ClearBasePaymentDocuments(); break;
+                    case CleanTarget::OrphanDetails:  success = dbManager->CleanOrphanPaymentDetails(); break;
+                    case CleanTarget::None: break;
+                }
             }
         }
         if (success) {
-            resultMessage = "Операция выполнена успешно.";
+            resultMessage = "Операция выполнена успешно. Резервная копия: " + backupPath;
         } else {
             resultMessage = "Ошибка при выполнении операции.";
         }
@@ -85,6 +132,15 @@ void SelectiveCleanView::ShowConfirmationModal() {
         resultMessage = "Операция отменена.";
         currentCleanTarget = CleanTarget::None;
     }
+}
+
+bool SelectiveCleanView::BackupBeforeDangerousOperation(std::string& backupPath) {
+    if (!uiManager || !uiManager->BackupCurrentDatabase("cleanup", backupPath)) {
+        resultMessage = "Ошибка: не удалось создать резервную копию перед очисткой.";
+        return false;
+    }
+
+    return true;
 }
 
 void SelectiveCleanView::SetDatabaseManager(DatabaseManager* manager) {

@@ -22,11 +22,41 @@ static std::string trim(const std::string &str) {
 static std::vector<std::string> split(const std::string &s, char delimiter) {
     std::vector<std::string> tokens;
     std::string token;
-    std::istringstream tokenStream(s);
-    while (std::getline(tokenStream, token, delimiter)) {
-        tokens.push_back(token);
+
+    bool in_quotes = false;
+    for (size_t i = 0; i < s.size(); ++i) {
+        char c = s[i];
+        if (c == '"') {
+            if (in_quotes && i + 1 < s.size() && s[i + 1] == '"') {
+                token.push_back('"');
+                ++i;
+            } else {
+                in_quotes = !in_quotes;
+            }
+        } else if (c == delimiter && !in_quotes) {
+            tokens.push_back(token);
+            token.clear();
+        } else {
+            token.push_back(c);
+        }
     }
+    tokens.push_back(token);
     return tokens;
+}
+
+static char detectDelimiter(const std::string &header_line) {
+    size_t tab_count = std::count(header_line.begin(), header_line.end(), '\t');
+    size_t semicolon_count =
+        std::count(header_line.begin(), header_line.end(), ';');
+    size_t comma_count = std::count(header_line.begin(), header_line.end(), ',');
+
+    if (tab_count >= semicolon_count && tab_count >= comma_count && tab_count > 0) {
+        return '\t';
+    }
+    if (semicolon_count >= comma_count && semicolon_count > 0) {
+        return ';';
+    }
+    return ',';
 }
 
 static std::string normalize_header(std::string value) {
@@ -134,8 +164,10 @@ void JO4ImportMapView::ReadPreviewData() {
     }
 
     std::string headerLine;
+    char delimiter = '\t';
     if (std::getline(file, headerLine)) {
-        fileHeaders = split(headerLine, '\t');
+        delimiter = detectDelimiter(headerLine);
+        fileHeaders = split(headerLine, delimiter);
         apply_auto_mapping(fileHeaders, currentMapping);
     }
 
@@ -147,7 +179,7 @@ void JO4ImportMapView::ReadPreviewData() {
     std::string dataLine;
     int line_count = 0;
     while (std::getline(file, dataLine) && line_count < lines_to_read) {
-        sampleData.push_back(split(dataLine, '\t'));
+        sampleData.push_back(split(dataLine, delimiter));
         line_count++;
     }
 }
@@ -158,6 +190,14 @@ void JO4ImportMapView::RefreshDropdownData() {
 
 void JO4ImportMapView::StartImport() {
     if (!dbManager || import_started || !uiManager) return;
+
+    std::string backupPath;
+    if (!uiManager->BackupCurrentDatabase("import_jo4", backupPath)) {
+        std::lock_guard<std::mutex> lock(*messageMutexPtr);
+        *messagePtr = "Ошибка: не удалось создать резервную копию перед импортом ЖО4.";
+        progressPtr->store(0.0f);
+        return;
+    }
 
     // Сбрасываем флаг отмены перед запуском
     uiManager->cancelImport.store(false);
@@ -175,13 +215,13 @@ void JO4ImportMapView::StartImport() {
     std::string path = importFilePath;
     ColumnMapping mapping = currentMapping;
 
-    std::thread([db, prog, msg, mtx, cancel, importing, path, mapping]() mutable {
+    std::thread([db, prog, msg, mtx, cancel, importing, path, mapping, backupPath]() mutable {
         // Сбрасываем флаг отмены и прогресс в самом потоке
         cancel->store(false);
         prog->store(0.0f);
         {
             std::lock_guard<std::mutex> lock(*mtx);
-            *msg = "Начало импорта ЖО4...";
+            *msg = "Резервная копия создана: " + backupPath;
         }
 
         ImportManager importManager;

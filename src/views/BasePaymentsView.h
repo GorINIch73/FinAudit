@@ -89,7 +89,7 @@ private:
     // Групповой автоподбор платежей
     bool show_auto_match_popup = false;
     int group_auto_match_min_score = 50;
-    bool group_auto_match_require_counterparty = true;
+    bool group_auto_match_require_counterparty = false;
     std::vector<BasePaymentDocument> group_auto_match_docs;
     int group_auto_match_total;
     int group_auto_match_linked;

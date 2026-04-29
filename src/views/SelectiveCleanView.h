@@ -8,7 +8,7 @@ class SelectiveCleanView : public BaseView {
 public:
     SelectiveCleanView() {
         IsVisible = true;
-        SetTitle(ICON_FA_ERASER " Очистка базы");
+        SetTitle(ICON_FA_DATABASE " Операции с базой");
     }
 
     void Render() override;
@@ -20,6 +20,7 @@ public:
 
 private:
     void ShowConfirmationModal();
+    bool BackupBeforeDangerousOperation(std::string& backupPath);
 
     enum class CleanTarget {
         None,
@@ -34,4 +35,6 @@ private:
     std::string confirmationMessage;
     std::string resultMessage;
     bool show_confirmation_modal_internal = false;
+    std::vector<IntegrityIssue> integrityIssues;
+    bool showIntegrityReport = false;
 };

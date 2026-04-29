@@ -76,7 +76,7 @@ FnAudit/
 │   │   ├── RegexesView.*       # Форма "Регулярные выражения"
 │   │   ├── SuspiciousWordsView.* # Форма "Подозрительные слова"
 │   │   ├── SelectiveCleanView.* # Форма "Избирательная очистка"
-│   │   ├── ServiceView.*       # Форма "Сервис"
+│   │   ├── ContractRegistryNumbersView.* # Форма "Реестровые номера контрактов"
 │   │   └── BaseView.h          # Базовый класс для всех форм
 │   ├── DatabaseManager.*   # Работа с базой данных SQLite
 │   ├── UIManager.*         # Управление интерфейсом

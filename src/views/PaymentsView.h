@@ -63,6 +63,30 @@ private:
     std::vector<Contract> contractsForDropdown;
     std::vector<BasePaymentDocument> baseDocsForDropdown;
     std::vector<SuspiciousWord> suspiciousWordsForFilter;
+    int selectedJo4DocumentId = -1;
+
+    struct Jo4Candidate {
+        int doc_id = -1;
+        int score = 0;
+        std::string reason;
+        bool referenced_in_payment = false;
+        bool amount_match = false;
+        bool date_match = false;
+        bool date_from_description_match = false;
+        bool number_strong_match = false;
+        bool date_strong_match = false;
+    };
+    bool jo4CacheDirty = true;
+    int cachedJo4PaymentId = -1;
+    std::vector<PaymentBaseDocumentLink> cachedJo4Links;
+    std::vector<Jo4Candidate> cachedJo4Candidates;
+    std::vector<Jo4Candidate> cachedJo4ReferencedCandidates;
+    std::string cachedJo4RefsPreview;
+    size_t cachedJo4RefsCount = 0;
+    int cachedJo4DetailsDocId = -1;
+    std::vector<BasePaymentDocumentDetail> cachedJo4Details;
+    bool showJo4Panel = false;
+
     char filterText[256];
     char counterpartyFilter[256];
     char kosguFilter[256];
@@ -139,4 +163,7 @@ private:
     double total_filtered_details_amount = 0.0;
 
     void SortPayments(const ImGuiTableSortSpecs* sort_specs);
+    void RenderJo4DocumentsPanel();
+    void InvalidateJo4Cache();
+    void RebuildJo4Cache();
 };

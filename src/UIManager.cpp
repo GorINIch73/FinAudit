@@ -1,8 +1,12 @@
 #include "UIManager.h"
 #include <algorithm>
+#include <chrono>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -157,6 +161,8 @@ void UIManager::SetExportManager(ExportManager *manager) {
 void UIManager::SetWindow(GLFWwindow *w) { window = w; }
 
 bool UIManager::LoadDatabase(const std::string &path) {
+    SaveAllViews();
+
     if (dbManager->open(path)) {
         currentDbPath = path;
         SetWindowTitle(currentDbPath);
@@ -180,11 +186,10 @@ void UIManager::SetWindowTitle(const std::string &db_path) {
     glfwSetWindowTitle(window, title.c_str());
 }
 
-void UIManager::ShowServiceView() {
-    // This pattern is safer and avoids dangling pointers. It's the same pattern
-    // used for the Settings view.
+void UIManager::ShowContractRegistryNumbersView() {
+    // Reuse the existing procurement registry-number import/export view.
     for (const auto &view : allViews) {
-        if (auto existing_view = dynamic_cast<ServiceView *>(view.get())) {
+        if (auto existing_view = dynamic_cast<ContractRegistryNumbersView *>(view.get())) {
             existing_view->IsVisible = true;
             ImGui::SetWindowFocus(existing_view->GetTitle());
             return; // Found and handled
@@ -192,13 +197,56 @@ void UIManager::ShowServiceView() {
     }
 
     // If we get here, the view doesn't exist, so create it.
-    CreateView<ServiceView>();
+    CreateView<ContractRegistryNumbersView>();
 }
 
 void UIManager::SaveAllViews() {
     for (const auto& view : allViews) {
         view->ForceSave();
     }
+}
+
+bool UIManager::BackupCurrentDatabase(const std::string& reason,
+                                      std::string& backupPath) {
+    if (!dbManager || !dbManager->is_open() || currentDbPath.empty()) {
+        return false;
+    }
+
+    SaveAllViews();
+
+    std::string safeReason;
+    safeReason.reserve(reason.size());
+    for (unsigned char c : reason) {
+        if (std::isalnum(c)) {
+            safeReason.push_back(static_cast<char>(std::tolower(c)));
+        } else if (c == '-' || c == '_') {
+            safeReason.push_back(static_cast<char>(c));
+        }
+    }
+    if (safeReason.empty()) {
+        safeReason = "operation";
+    }
+
+    auto now = std::chrono::system_clock::now();
+    std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+    std::tm localTime{};
+#ifdef _WIN32
+    localtime_s(&localTime, &nowTime);
+#else
+    localtime_r(&nowTime, &localTime);
+#endif
+
+    std::ostringstream timestamp;
+    timestamp << std::put_time(&localTime, "%Y%m%d-%H%M%S");
+
+    std::filesystem::path dbPath(currentDbPath);
+    std::filesystem::path backup =
+        dbPath.parent_path() /
+        (dbPath.stem().string() + "." + safeReason + "." +
+         timestamp.str() + ".bak" + dbPath.extension().string());
+
+    backupPath = backup.string();
+    return dbManager->backupTo(backupPath);
 }
 
 SpecialQueryView *UIManager::CreateSpecialQueryView(const std::string &title,
@@ -395,14 +443,14 @@ void UIManager::HandleFileDialogs() {
         ImGuiFileDialog::Instance()->Close();
     }
 
-    // Service View Dialogs
+    // Contract registry-number import/export dialogs
     if (ImGuiFileDialog::Instance()->Display("ChooseFileDlgKey_IKZ_Service")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
-            // Find ServiceView and trigger import
+            // Find contract registry-number view and trigger import
             for (auto& view : allViews) {
-                if (auto* serviceView = dynamic_cast<ServiceView*>(view.get())) {
-                    serviceView->StartIKZImport(filePathName, importManager, dbManager,
+                if (auto* registryView = dynamic_cast<ContractRegistryNumbersView*>(view.get())) {
+                    registryView->StartIKZImport(filePathName, importManager, dbManager,
                                                importProgress, importMessage, importMutex,
                                                isImporting);
                     break;
@@ -415,10 +463,10 @@ void UIManager::HandleFileDialogs() {
     if (ImGuiFileDialog::Instance()->Display("ExportContractsDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
-            // Find ServiceView and trigger export
+            // Find contract registry-number view and trigger export
             for (auto& view : allViews) {
-                if (auto* serviceView = dynamic_cast<ServiceView*>(view.get())) {
-                    serviceView->StartContractsExport(filePathName, exportManager,
+                if (auto* registryView = dynamic_cast<ContractRegistryNumbersView*>(view.get())) {
+                    registryView->StartContractsExport(filePathName, exportManager,
                                                      importProgress, importMessage, importMutex,
                                                      isImporting);
                     break;
@@ -676,4 +724,3 @@ void UIManager::ImportRegexes(const std::string& path) {
         dbManager->addRegex(new_regex);
     }
 }
-

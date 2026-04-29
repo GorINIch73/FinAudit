@@ -393,10 +393,24 @@ void ImportMapView::Render() {
         ImGui::Checkbox("Возврат", &is_return_import);
         if (ImGui::Button("Импортировать")) {
             if (dbManager && uiManager && uiManager->importManager && cancel_flag) {
+                std::string backupPath;
+                if (!uiManager->BackupCurrentDatabase("import_bank", backupPath)) {
+                    std::lock_guard<std::mutex> lock(uiManager->importMutex);
+                    uiManager->importMessage =
+                        "Ошибка: не удалось создать резервную копию перед импортом.";
+                    uiManager->importProgress = 0.0f;
+                    return;
+                }
+
                 import_started = true;
                 uiManager->isImporting = true;
                 *cancel_flag = false; // Reset cancel flag before starting new import
-                std::thread([this]() {
+                std::thread([this, backupPath]() {
+                    {
+                        std::lock_guard<std::mutex> lock(uiManager->importMutex);
+                        uiManager->importMessage =
+                            "Резервная копия создана: " + backupPath;
+                    }
                     uiManager->importManager->ImportPaymentsFromTsv(
                         importFilePath, dbManager, currentMapping,
                         uiManager->importProgress, uiManager->importMessage,

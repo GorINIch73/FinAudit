@@ -10,9 +10,9 @@
 class UIManager;
 class ExportManager;
 
-class ServiceView : public BaseView {
+class ContractRegistryNumbersView : public BaseView {
 public:
-    ServiceView();
+    ContractRegistryNumbersView();
     void Render() override;
 
     void SetDatabaseManager(DatabaseManager* manager) override { dbManager = manager; }
@@ -43,4 +43,5 @@ private:
 
     // For Contract Export
     int m_lastExportCount = -1;
+
 };

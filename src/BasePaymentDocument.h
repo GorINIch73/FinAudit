@@ -29,3 +29,17 @@ struct BasePaymentDocumentDetail {
     double amount = 0.0;                 // сумма
     std::string note;                    // примечание
 };
+
+// Связь платежа банка с документом основания из ЖО4.
+// Нужна для случаев "один платеж - несколько документов" и
+// "один документ - несколько частичных оплат".
+struct PaymentBaseDocumentLink {
+    int id = -1;
+    int payment_id = -1;
+    int base_document_id = -1;
+    double linked_amount = 0.0;          // распределенная сумма, 0 если не задана
+    int match_score = 0;                 // оценка автосопоставления
+    std::string match_status;            // suggested, confirmed, rejected, manual
+    std::string match_reason;            // сумма, номер, дата, ручная связь и т.п.
+    std::string note;                    // примечание аудитора
+};

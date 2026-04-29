@@ -9,11 +9,194 @@
 #include <ctime>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <string>
 
 #include "../UIManager.h"
+
+static std::string normalize_payment_doc_number(const std::string &value) {
+    std::string result;
+    result.reserve(value.size());
+    for (unsigned char c : value) {
+        if (std::isalnum(c)) {
+            result.push_back(static_cast<char>(std::tolower(c)));
+        }
+    }
+    return result;
+}
+
+static bool is_reliable_payment_doc_ref(const std::string &normalized_ref) {
+    if (normalized_ref.size() < 3) {
+        return false;
+    }
+
+    bool has_alpha = false;
+    bool all_digits = true;
+    for (unsigned char c : normalized_ref) {
+        if (std::isalpha(c)) {
+            has_alpha = true;
+        }
+        if (!std::isdigit(c)) {
+            all_digits = false;
+        }
+    }
+
+    if (has_alpha) {
+        return true;
+    }
+
+    if (all_digits) {
+        if (normalized_ref.size() <= 3) {
+            return false;
+        }
+        int value = 0;
+        try {
+            value = std::stoi(normalized_ref);
+        } catch (...) {
+            return false;
+        }
+        if (value >= 1900 && value <= 2100) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool payment_text_contains_doc_number(const std::string &doc_number,
+                                             const std::string &text) {
+    std::string normalized_doc = normalize_payment_doc_number(doc_number);
+    if (!is_reliable_payment_doc_ref(normalized_doc)) {
+        return false;
+    }
+
+    std::string normalized_text = normalize_payment_doc_number(text);
+    return normalized_text.find(normalized_doc) != std::string::npos;
+}
+
+struct PaymentDocumentReference {
+    std::string number;
+    std::string date;
+};
+
+static std::string normalize_payment_reference_date(const std::string &value) {
+    std::smatch match;
+    try {
+        std::regex iso_date_regex("(\\d{4})-(\\d{1,2})-(\\d{1,2})");
+        if (std::regex_search(value, match, iso_date_regex) &&
+            match.size() >= 4) {
+            int year = std::stoi(match[1].str());
+            int month = std::stoi(match[2].str());
+            int day = std::stoi(match[3].str());
+            if (day >= 1 && day <= 31 && month >= 1 && month <= 12 &&
+                year >= 1900 && year <= 2100) {
+                char buffer[11];
+                snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d", year,
+                         month, day);
+                return buffer;
+            }
+        }
+
+        std::regex date_regex("(\\d{1,2})[./-](\\d{1,2})[./-](\\d{2,4})");
+        if (!std::regex_search(value, match, date_regex) || match.size() < 4) {
+            return "";
+        }
+    } catch (const std::regex_error &) {
+        return "";
+    }
+
+    int day = std::stoi(match[1].str());
+    int month = std::stoi(match[2].str());
+    int year = std::stoi(match[3].str());
+    if (year < 100) {
+        year += 2000;
+    }
+    if (day < 1 || day > 31 || month < 1 || month > 12 ||
+        year < 1900 || year > 2100) {
+        return "";
+    }
+
+    char buffer[11];
+    snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d", year, month, day);
+    return buffer;
+}
+
+static std::vector<PaymentDocumentReference> extract_payment_document_references(
+    const std::string &text) {
+    std::map<std::string, PaymentDocumentReference> refs;
+
+    try {
+        std::regex context_regex(
+            "(упд|акт|счет|сч\\.?|накладн\\w*|документ\\s+о\\s+приемк\\w*|"
+            "приемк\\w*)"
+            "[^0-9a-zA-Zа-яА-Я]{0,20}"
+            "([0-9a-zA-Zа-яА-Я/_.-]{1,40}"
+            "(?:\\s*(?:,|;|/|\\\\|\\+|и)\\s*[0-9a-zA-Zа-яА-Я/_.-]{1,40})*)",
+            std::regex_constants::icase);
+
+        auto begin = std::sregex_iterator(text.begin(), text.end(), context_regex);
+        auto end = std::sregex_iterator();
+        std::regex token_regex("[0-9a-zA-Zа-яА-Я][0-9a-zA-Zа-яА-Я/_.-]{0,39}");
+
+        for (auto it = begin; it != end; ++it) {
+            if ((*it).size() < 3) {
+                continue;
+            }
+
+            std::string numbers = (*it)[2].str();
+            size_t suffix_start = static_cast<size_t>((*it).position()) +
+                                  static_cast<size_t>((*it).length());
+            std::string suffix = text.substr(
+                suffix_start, std::min<size_t>(80, text.size() - suffix_start));
+            std::string ref_date = normalize_payment_reference_date(suffix);
+            auto token_begin =
+                std::sregex_iterator(numbers.begin(), numbers.end(), token_regex);
+            for (auto token_it = token_begin; token_it != end; ++token_it) {
+                std::string normalized =
+                    normalize_payment_doc_number((*token_it).str());
+                if (is_reliable_payment_doc_ref(normalized)) {
+                    auto &ref = refs[normalized];
+                    ref.number = normalized;
+                    if (ref.date.empty()) {
+                        ref.date = ref_date;
+                    }
+                }
+            }
+        }
+    } catch (const std::regex_error &) {
+        return {};
+    }
+
+    std::vector<PaymentDocumentReference> result;
+    for (const auto &entry : refs) {
+        result.push_back(entry.second);
+    }
+    return result;
+}
+
+static std::set<std::string> extract_payment_reference_dates(
+    const std::string &text) {
+    std::set<std::string> dates;
+    try {
+        std::regex date_regex(
+            "(\\d{4}-\\d{1,2}-\\d{1,2}|\\d{1,2}[./-]\\d{1,2}[./-]\\d{2,4})");
+        auto begin = std::sregex_iterator(text.begin(), text.end(), date_regex);
+        auto end = std::sregex_iterator();
+        for (auto it = begin; it != end; ++it) {
+            std::string normalized =
+                normalize_payment_reference_date((*it)[1].str());
+            if (!normalized.empty()) {
+                dates.insert(normalized);
+            }
+        }
+    } catch (const std::regex_error &) {
+        return dates;
+    }
+    return dates;
+}
 
 PaymentsView::PaymentsView()
     : selectedPaymentIndex(-1),
@@ -52,6 +235,7 @@ void PaymentsView::RefreshData() {
         selectedPaymentIndex = -1;
         paymentDetails.clear();
         selectedDetailIndex = -1;
+        InvalidateJo4Cache();
     }
 }
 
@@ -62,6 +246,7 @@ void PaymentsView::RefreshDropdownData() {
         contractsForDropdown = dbManager->getContracts();
         baseDocsForDropdown = dbManager->getBasePaymentDocuments();
         suspiciousWordsForFilter = dbManager->getSuspiciousWords();
+        InvalidateJo4Cache();
     }
 }
 
@@ -762,6 +947,8 @@ void PaymentsView::Render() {
                             isAdding = false;
                             isDirty = false;
                             selectedDetailIndex = -1;
+                            selectedJo4DocumentId = -1;
+                            InvalidateJo4Cache();
                             isDetailDirty = false;
                             need_to_break = true;
                         }
@@ -1303,6 +1490,12 @@ void PaymentsView::Render() {
                     isDetailDirty = true;
                 }
             }
+
+            ImGui::Separator();
+            ImGui::Checkbox("Показывать ЖО4", &showJo4Panel);
+            if (showJo4Panel) {
+                RenderJo4DocumentsPanel();
+            }
         } else {
             ImGui::Text("Выберите платеж для просмотра расшифровок.");
         }
@@ -1487,6 +1680,386 @@ void PaymentsView::UpdateFilteredPayments() {
                 total_filtered_details_amount += detail.amount;
             }
         }
+    }
+}
+
+void PaymentsView::InvalidateJo4Cache() {
+    jo4CacheDirty = true;
+    cachedJo4PaymentId = -1;
+    cachedJo4Links.clear();
+    cachedJo4Candidates.clear();
+    cachedJo4ReferencedCandidates.clear();
+    cachedJo4RefsPreview.clear();
+    cachedJo4RefsCount = 0;
+    cachedJo4DetailsDocId = -1;
+    cachedJo4Details.clear();
+}
+
+void PaymentsView::RebuildJo4Cache() {
+    if (!dbManager || selectedPayment.id <= 0) {
+        InvalidateJo4Cache();
+        return;
+    }
+
+    if (!jo4CacheDirty && cachedJo4PaymentId == selectedPayment.id) {
+        return;
+    }
+
+    cachedJo4PaymentId = selectedPayment.id;
+    jo4CacheDirty = false;
+    cachedJo4Links = dbManager->getPaymentBaseDocumentLinksForPayment(selectedPayment.id);
+    cachedJo4Candidates.clear();
+    cachedJo4ReferencedCandidates.clear();
+    cachedJo4RefsPreview.clear();
+    cachedJo4RefsCount = 0;
+
+    std::set<int> linked_doc_ids;
+    for (const auto &link : cachedJo4Links) {
+        if (link.match_status != "rejected") {
+            linked_doc_ids.insert(link.base_document_id);
+        }
+    }
+
+    std::vector<PaymentDocumentReference> payment_doc_refs =
+        extract_payment_document_references(selectedPayment.description);
+    std::set<std::string> payment_doc_dates =
+        extract_payment_reference_dates(selectedPayment.description);
+    cachedJo4RefsCount = payment_doc_refs.size();
+    for (size_t i = 0; i < payment_doc_refs.size() && i < 8; ++i) {
+        if (i > 0) {
+            cachedJo4RefsPreview += ", ";
+        }
+        cachedJo4RefsPreview += payment_doc_refs[i].number;
+        if (!payment_doc_refs[i].date.empty()) {
+            cachedJo4RefsPreview += " от " + payment_doc_refs[i].date;
+        }
+    }
+
+    const std::string normalized_payment_date =
+        normalize_payment_reference_date(selectedPayment.date);
+
+    for (const auto &doc : baseDocsForDropdown) {
+        if (linked_doc_ids.count(doc.id) > 0) {
+            continue;
+        }
+
+        int score = 0;
+        std::string reason;
+        bool referenced_in_payment = false;
+        bool amount_match = false;
+        bool date_match = false;
+        bool date_from_description_match = false;
+        std::string normalized_doc_date =
+            normalize_payment_reference_date(doc.date);
+        std::string normalized_doc_number =
+            normalize_payment_doc_number(doc.number);
+
+        if (!normalized_doc_date.empty() &&
+            payment_doc_dates.count(normalized_doc_date) > 0) {
+            date_match = true;
+            date_from_description_match = true;
+        }
+
+        if (is_reliable_payment_doc_ref(normalized_doc_number)) {
+            for (const auto &ref : payment_doc_refs) {
+                if (ref.number == normalized_doc_number ||
+                    normalized_doc_number.find(ref.number) != std::string::npos ||
+                    ref.number.find(normalized_doc_number) != std::string::npos) {
+                    referenced_in_payment = true;
+                    if (!ref.date.empty() && ref.date == normalized_doc_date) {
+                        date_match = true;
+                        date_from_description_match = true;
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (referenced_in_payment) {
+            score += 85;
+            reason += "номер после счет/акт/УПД/накладная; ";
+            if (date_from_description_match) {
+                score += 30;
+                reason += "дата документа из назначения; ";
+            }
+        } else if (!doc.number.empty() &&
+                   payment_text_contains_doc_number(doc.number,
+                                                    selectedPayment.description)) {
+            referenced_in_payment = true;
+            score += 45;
+            reason += "номер встречается в назначении; ";
+        }
+
+        if (std::abs(std::abs(doc.total_amount) -
+                     std::abs(selectedPayment.amount)) <= 0.01) {
+            amount_match = true;
+            score += 25;
+            reason += "сумма; ";
+        }
+
+        if (!date_match && !normalized_doc_date.empty() &&
+            normalized_doc_date == normalized_payment_date) {
+            date_match = true;
+            score += 10;
+            reason += "дата платежа; ";
+        }
+
+        if (amount_match) {
+            Jo4Candidate candidate;
+            candidate.doc_id = doc.id;
+            candidate.score = score;
+            candidate.reason = reason;
+            candidate.referenced_in_payment = referenced_in_payment;
+            candidate.amount_match = amount_match;
+            candidate.date_match = date_match;
+            candidate.date_from_description_match = date_from_description_match;
+            candidate.number_strong_match = amount_match && referenced_in_payment;
+            candidate.date_strong_match =
+                amount_match && date_from_description_match;
+            cachedJo4Candidates.push_back(candidate);
+            if (referenced_in_payment) {
+                cachedJo4ReferencedCandidates.push_back(candidate);
+            }
+        }
+    }
+
+    std::sort(cachedJo4Candidates.begin(), cachedJo4Candidates.end(),
+              [](const Jo4Candidate &a, const Jo4Candidate &b) {
+                  if (a.number_strong_match != b.number_strong_match) {
+                      return a.number_strong_match > b.number_strong_match;
+                  }
+                  if (a.date_strong_match != b.date_strong_match) {
+                      return a.date_strong_match > b.date_strong_match;
+                  }
+                  if (a.referenced_in_payment != b.referenced_in_payment) {
+                      return a.referenced_in_payment > b.referenced_in_payment;
+                  }
+                  return a.score > b.score;
+              });
+
+    auto doc_date_for_candidate = [&](const Jo4Candidate &candidate) {
+        auto it = std::find_if(baseDocsForDropdown.begin(), baseDocsForDropdown.end(),
+                               [&](const BasePaymentDocument &doc) {
+                                   return doc.id == candidate.doc_id;
+                               });
+        return it == baseDocsForDropdown.end() ? std::string() : it->date;
+    };
+    std::sort(cachedJo4ReferencedCandidates.begin(),
+              cachedJo4ReferencedCandidates.end(),
+              [&](const Jo4Candidate &a, const Jo4Candidate &b) {
+                  return doc_date_for_candidate(a) < doc_date_for_candidate(b);
+              });
+}
+
+void PaymentsView::RenderJo4DocumentsPanel() {
+    if (!dbManager || selectedPayment.id <= 0) {
+        return;
+    }
+
+    ImGui::Separator();
+    ImGui::Text("ЖО4 / документы основания");
+    RebuildJo4Cache();
+
+    std::set<int> linked_doc_ids;
+    for (const auto &link : cachedJo4Links) {
+        if (link.match_status != "rejected") {
+            linked_doc_ids.insert(link.base_document_id);
+        }
+    }
+
+    auto find_doc = [&](int doc_id) -> const BasePaymentDocument* {
+        auto it = std::find_if(baseDocsForDropdown.begin(), baseDocsForDropdown.end(),
+                               [&](const BasePaymentDocument &doc) {
+                                   return doc.id == doc_id;
+                               });
+        return it == baseDocsForDropdown.end() ? nullptr : &(*it);
+    };
+
+    if (ImGui::BeginTable("linked_jo4_docs_table", 6,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Дата");
+        ImGui::TableSetupColumn("Номер");
+        ImGui::TableSetupColumn("Документ");
+        ImGui::TableSetupColumn("Сумма");
+        ImGui::TableSetupColumn("Статус");
+        ImGui::TableSetupColumn("Причина");
+        ImGui::TableHeadersRow();
+
+        for (const auto &link : cachedJo4Links) {
+            if (link.match_status == "rejected") {
+                continue;
+            }
+            const BasePaymentDocument *doc = find_doc(link.base_document_id);
+            if (!doc) {
+                continue;
+            }
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            char label[128];
+            snprintf(label, sizeof(label), "%s##linked_jo4_%d",
+                     doc->date.c_str(), doc->id);
+            if (ImGui::Selectable(label, selectedJo4DocumentId == doc->id,
+                                  ImGuiSelectableFlags_SpanAllColumns)) {
+                selectedJo4DocumentId = doc->id;
+            }
+            ImGui::TableNextColumn();
+            ImGui::Text("%s", doc->number.c_str());
+            ImGui::TableNextColumn();
+            ImGui::Text("%s", doc->document_name.c_str());
+            ImGui::TableNextColumn();
+            ImGui::Text("%.2f", doc->total_amount);
+            ImGui::TableNextColumn();
+            ImGui::Text("%s", link.match_status.c_str());
+            ImGui::TableNextColumn();
+            ImGui::Text("%s", link.match_reason.c_str());
+        }
+        ImGui::EndTable();
+    }
+
+    if (selectedJo4DocumentId != -1) {
+        const BasePaymentDocument *doc = find_doc(selectedJo4DocumentId);
+        if (doc) {
+            ImGui::Text("Строки ЖО4: %s от %s, %s",
+                        doc->number.c_str(), doc->date.c_str(),
+                        doc->counterparty_name.c_str());
+            if (cachedJo4DetailsDocId != doc->id) {
+                cachedJo4Details =
+                    dbManager->getBasePaymentDocumentDetails(doc->id);
+                cachedJo4DetailsDocId = doc->id;
+            }
+            if (ImGui::BeginTable("selected_jo4_doc_details", 5,
+                                  ImGuiTableFlags_Borders |
+                                      ImGuiTableFlags_RowBg |
+                                      ImGuiTableFlags_Resizable |
+                                      ImGuiTableFlags_ScrollX)) {
+                ImGui::TableSetupColumn("Содержание", ImGuiTableColumnFlags_WidthFixed, 380.0f);
+                ImGui::TableSetupColumn("Дебет");
+                ImGui::TableSetupColumn("Кредит");
+                ImGui::TableSetupColumn("КОСГУ");
+                ImGui::TableSetupColumn("Сумма");
+                ImGui::TableHeadersRow();
+
+                for (const auto &detail : cachedJo4Details) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextWrapped("%s", detail.operation_content.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", detail.debit_account.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", detail.credit_account.c_str());
+                    ImGui::TableNextColumn();
+                    const char *kosguCode = "N/A";
+                    for (const auto &k : kosguForDropdown) {
+                        if (k.id == detail.kosgu_id) {
+                            kosguCode = k.code.c_str();
+                            break;
+                        }
+                    }
+                    ImGui::Text("%s", kosguCode);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%.2f", detail.amount);
+                }
+                ImGui::EndTable();
+            }
+        }
+    }
+
+    if (cachedJo4RefsCount > 0) {
+        ImGui::Text("Ссылки в назначении: %zu", cachedJo4RefsCount);
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", cachedJo4RefsPreview.c_str());
+    }
+
+    if (cachedJo4ReferencedCandidates.size() > 1) {
+        double group_sum = 0.0;
+        for (const auto &candidate : cachedJo4ReferencedCandidates) {
+            const BasePaymentDocument *doc = find_doc(candidate.doc_id);
+            if (doc) {
+                group_sum += doc->total_amount;
+            }
+        }
+
+        ImGui::Text("Группа по ссылкам: документов %zu, сумма %.2f, разница %.2f",
+                    cachedJo4ReferencedCandidates.size(), group_sum,
+                    selectedPayment.amount - group_sum);
+    }
+
+    ImGui::Text("Кандидаты ЖО4");
+    ImGui::SameLine();
+    ImGui::TextDisabled("показаны только совпадения по сумме");
+    if (ImGui::BeginTable("jo4_candidates_table", 8,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_Resizable |
+                              ImGuiTableFlags_ScrollX)) {
+        ImGui::TableSetupColumn("Балл");
+        ImGui::TableSetupColumn("Совп.");
+        ImGui::TableSetupColumn("Дата");
+        ImGui::TableSetupColumn("Номер");
+        ImGui::TableSetupColumn("Документ");
+        ImGui::TableSetupColumn("Контрагент ЖО4", ImGuiTableColumnFlags_WidthFixed, 260.0f);
+        ImGui::TableSetupColumn("Сумма");
+        ImGui::TableSetupColumn("Причина", ImGuiTableColumnFlags_WidthFixed, 260.0f);
+        ImGui::TableHeadersRow();
+
+        int shown = 0;
+        for (const auto &candidate : cachedJo4Candidates) {
+            if (shown++ >= 12) {
+                break;
+            }
+
+            const BasePaymentDocument *doc = find_doc(candidate.doc_id);
+            if (!doc) {
+                continue;
+            }
+            ImGui::TableNextRow();
+            if (candidate.number_strong_match) {
+                ImU32 color =
+                    ImGui::GetColorU32(ImVec4(0.05f, 0.48f, 0.16f, 0.75f));
+                ImGui::TableSetBgColor(
+                    ImGuiTableBgTarget_RowBg0, color);
+                ImGui::TableSetBgColor(
+                    ImGuiTableBgTarget_RowBg1, color);
+            } else if (candidate.date_strong_match) {
+                ImU32 color =
+                    ImGui::GetColorU32(ImVec4(0.38f, 0.58f, 0.30f, 0.55f));
+                ImGui::TableSetBgColor(
+                    ImGuiTableBgTarget_RowBg0, color);
+                ImGui::TableSetBgColor(
+                    ImGuiTableBgTarget_RowBg1, color);
+            }
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", candidate.score);
+            ImGui::TableNextColumn();
+            std::string match_flags = "Сумма";
+            if (candidate.number_strong_match) {
+                match_flags += ", Номер";
+            }
+            if (candidate.date_strong_match) {
+                match_flags += ", Дата";
+            }
+            ImGui::Text("%s", match_flags.c_str());
+            ImGui::TableNextColumn();
+            ImGui::Text("%s", doc->date.c_str());
+            ImGui::TableNextColumn();
+            char label[128];
+            snprintf(label, sizeof(label), "%s##candidate_jo4_%d",
+                     doc->number.c_str(), doc->id);
+            if (ImGui::Selectable(label, selectedJo4DocumentId == doc->id,
+                                  ImGuiSelectableFlags_SpanAllColumns)) {
+                selectedJo4DocumentId = doc->id;
+            }
+            ImGui::TableNextColumn();
+            ImGui::Text("%s", doc->document_name.c_str());
+            ImGui::TableNextColumn();
+            ImGui::Text("%s", doc->counterparty_name.c_str());
+            ImGui::TableNextColumn();
+            ImGui::Text("%.2f", doc->total_amount);
+            ImGui::TableNextColumn();
+            ImGui::Text("%s", candidate.reason.c_str());
+        }
+        ImGui::EndTable();
     }
 }
 

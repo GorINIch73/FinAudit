@@ -26,7 +26,7 @@
 #include "views/SelectiveCleanView.h"
 #include "views/SuspiciousWordsView.h"
 #include "views/SpecialQueryView.h"
-#include "views/ServiceView.h"
+#include "views/ContractRegistryNumbersView.h"
 
 struct GLFWwindow;
 class ImportManager;
@@ -46,8 +46,9 @@ public:
     void AddRecentDbPath(std::string path);
     void HandleFileDialogs();
     void SetWindowTitle(const std::string& db_path);
-    void ShowServiceView();
+    void ShowContractRegistryNumbersView();
     void SaveAllViews();
+    bool BackupCurrentDatabase(const std::string& reason, std::string& backupPath);
     SpecialQueryView* CreateSpecialQueryView(const std::string& title, const std::string& query);
     void ApplyTheme(int theme_index);
     void ApplyFont(int font_size);
@@ -69,17 +70,17 @@ public:
         view->SetDatabaseManager(dbManager);
         view->SetPdfReporter(pdfReporter);
 
-        if constexpr (std::is_same_v<T, ImportMapView> || std::is_same_v<T, JO4ImportMapView> || std::is_same_v<T, PaymentsView> || std::is_same_v<T, ContractsView> || std::is_same_v<T, KosguView> || std::is_same_v<T, CounterpartiesView> || std::is_same_v<T, SettingsView> || std::is_same_v<T, ServiceView>) {
+        if constexpr (std::is_same_v<T, ImportMapView> || std::is_same_v<T, JO4ImportMapView> || std::is_same_v<T, PaymentsView> || std::is_same_v<T, ContractsView> || std::is_same_v<T, KosguView> || std::is_same_v<T, CounterpartiesView> || std::is_same_v<T, SettingsView> || std::is_same_v<T, ContractRegistryNumbersView>) {
             viewPtr->SetUIManager(this);
         }
         
-        if constexpr (std::is_same_v<T, ServiceView>) {
+        if constexpr (std::is_same_v<T, ContractRegistryNumbersView>) {
             viewPtr->SetExportManager(exportManager);
         }
 
         std::string title = std::string(view->GetTitle());
         // Only add a unique ID if it's not a singleton view like Settings or ImportMap
-        if constexpr (!std::is_same_v<T, SettingsView> && !std::is_same_v<T, ImportMapView> && !std::is_same_v<T, JO4ImportMapView> && !std::is_same_v<T, SelectiveCleanView> && !std::is_same_v<T, SuspiciousWordsView> && !std::is_same_v<T, ServiceView>) {
+        if constexpr (!std::is_same_v<T, SettingsView> && !std::is_same_v<T, ImportMapView> && !std::is_same_v<T, JO4ImportMapView> && !std::is_same_v<T, SelectiveCleanView> && !std::is_same_v<T, SuspiciousWordsView> && !std::is_same_v<T, ContractRegistryNumbersView>) {
              title += "###" + std::to_string(viewIdCounter++);
         }
         view->SetTitle(title);
@@ -110,4 +111,3 @@ private:
     GLFWwindow* window;
     int viewIdCounter = 0;
 };
-

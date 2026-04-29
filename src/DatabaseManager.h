@@ -16,6 +16,12 @@
 
 struct ContractExportData; // Forward declaration
 
+struct IntegrityIssue {
+    std::string severity;
+    std::string check_name;
+    std::string details;
+};
+
 class DatabaseManager {
 public:
     DatabaseManager();
@@ -63,11 +69,19 @@ public:
     // BasePaymentDocument methods
     int addBasePaymentDocument(BasePaymentDocument& doc);
     int getBasePaymentDocumentIdByNumberDate(const std::string& number, const std::string& date);
+    int getBasePaymentDocumentIdBySignature(const std::string& number, const std::string& date, const std::string& document_name, const std::string& counterparty_name);
     std::vector<BasePaymentDocument> getBasePaymentDocuments();
     bool updateBasePaymentDocument(const BasePaymentDocument& doc);
     bool deleteBasePaymentDocument(int id);
     bool clearBasePaymentDocuments();
     std::vector<ContractPaymentInfo> getPaymentInfoForBasePaymentDocument(int doc_id);
+
+    // Связи платежей банка с документами ЖО4. Поддерживают несколько
+    // документов на один платеж и частичные оплаты одного документа.
+    bool addPaymentBaseDocumentLink(PaymentBaseDocumentLink& link);
+    std::vector<PaymentBaseDocumentLink> getPaymentBaseDocumentLinksForPayment(int payment_id);
+    std::vector<PaymentBaseDocumentLink> getPaymentBaseDocumentLinksForDocument(int base_document_id);
+    bool deletePaymentBaseDocumentLink(int link_id);
 
     // BasePaymentDocumentDetail methods
     bool addBasePaymentDocumentDetail(BasePaymentDocumentDetail& detail);
@@ -78,6 +92,7 @@ public:
     bool deleteAllBasePaymentDocumentDetails(int document_id);
     bool bulkUpdateBasePaymentDocumentDetails(const std::vector<int>& document_ids, const std::string& field_to_update, int new_id);
     int getBasePaymentDocumentDetailIdByContent(int document_id, const std::string& operation_content);
+    int getBasePaymentDocumentDetailIdBySignature(const BasePaymentDocumentDetail& detail);
 
     // Автоподбор платежа из банка для документа основания
     struct PaymentMatch {
@@ -165,12 +180,14 @@ public:
     bool ClearContracts();
     bool ClearBasePaymentDocuments();
     bool CleanOrphanPaymentDetails();
+    std::vector<IntegrityIssue> getIntegrityReport();
     
     bool executeSelect(const std::string& sql, std::vector<std::string>& columns, std::vector<std::vector<std::string>>& rows);
 
 private:
     bool execute(const std::string& sql);
     bool configureConnection();
+    void applyPerformanceIndexes();
     void checkAndUpdateDatabaseSchema();
     
     sqlite3* db;

@@ -2,6 +2,7 @@
 #include "ExportManager.h"
 #include <algorithm>
 #include <iostream>
+#include <regex>
 #include <sstream>
 #include <vector>
 
@@ -151,11 +152,94 @@ void DatabaseManager::checkAndUpdateDatabaseSchema() {
 
     // Next migration target: rename DB column PaymentDetails.invoice_id to
     // base_document_id. For now it stores BasePaymentDocuments.id.
+    execute("CREATE TABLE IF NOT EXISTS PaymentBaseDocumentLinks ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "payment_id INTEGER NOT NULL,"
+            "base_document_id INTEGER NOT NULL,"
+            "linked_amount REAL DEFAULT 0.0,"
+            "match_score INTEGER DEFAULT 0,"
+            "match_status TEXT DEFAULT 'suggested',"
+            "match_reason TEXT,"
+            "note TEXT,"
+            "created_at TEXT DEFAULT CURRENT_TIMESTAMP,"
+            "updated_at TEXT DEFAULT CURRENT_TIMESTAMP,"
+            "FOREIGN KEY(payment_id) REFERENCES Payments(id) ON DELETE CASCADE,"
+            "FOREIGN KEY(base_document_id) REFERENCES BasePaymentDocuments(id) ON DELETE CASCADE,"
+            "UNIQUE(payment_id, base_document_id));");
+    applyPerformanceIndexes();
+}
+
+void DatabaseManager::applyPerformanceIndexes() {
+    if (!db)
+        return;
+
+    struct IndexSpec {
+        const char *table;
+        const char *sql;
+    };
+
+    const std::vector<IndexSpec> indexes = {
+        {"Contracts",
+         "CREATE INDEX IF NOT EXISTS idx_contracts_number_date_cp "
+         "ON Contracts(number, date, counterparty_id);"},
+        {"Payments",
+         "CREATE INDEX IF NOT EXISTS idx_payments_date_doc_amount_cp "
+         "ON Payments(date, doc_number, amount, counterparty_id);"},
+        {"Payments",
+         "CREATE INDEX IF NOT EXISTS idx_payments_counterparty "
+         "ON Payments(counterparty_id);"},
+        {"PaymentDetails",
+         "CREATE INDEX IF NOT EXISTS idx_payment_details_payment "
+         "ON PaymentDetails(payment_id);"},
+        {"PaymentDetails",
+         "CREATE INDEX IF NOT EXISTS idx_payment_details_kosgu "
+         "ON PaymentDetails(kosgu_id);"},
+        {"PaymentDetails",
+         "CREATE INDEX IF NOT EXISTS idx_payment_details_contract "
+         "ON PaymentDetails(contract_id);"},
+        {"PaymentDetails",
+         "CREATE INDEX IF NOT EXISTS idx_payment_details_base_doc "
+         "ON PaymentDetails(invoice_id);"},
+        {"BasePaymentDocuments",
+         "CREATE INDEX IF NOT EXISTS idx_base_docs_number_date_cp "
+         "ON BasePaymentDocuments(number, date, counterparty_name);"},
+        {"BasePaymentDocuments",
+         "CREATE INDEX IF NOT EXISTS idx_base_docs_contract "
+         "ON BasePaymentDocuments(contract_id);"},
+        {"BasePaymentDocuments",
+         "CREATE INDEX IF NOT EXISTS idx_base_docs_payment "
+         "ON BasePaymentDocuments(payment_id);"},
+        {"PaymentBaseDocumentLinks",
+         "CREATE INDEX IF NOT EXISTS idx_payment_base_doc_links_payment "
+         "ON PaymentBaseDocumentLinks(payment_id);"},
+        {"PaymentBaseDocumentLinks",
+         "CREATE INDEX IF NOT EXISTS idx_payment_base_doc_links_document "
+         "ON PaymentBaseDocumentLinks(base_document_id);"},
+        {"PaymentBaseDocumentLinks",
+         "CREATE INDEX IF NOT EXISTS idx_payment_base_doc_links_status "
+         "ON PaymentBaseDocumentLinks(match_status);"},
+        {"BasePaymentDocumentDetails",
+         "CREATE INDEX IF NOT EXISTS idx_base_doc_details_document "
+         "ON BasePaymentDocumentDetails(document_id);"},
+        {"BasePaymentDocumentDetails",
+         "CREATE INDEX IF NOT EXISTS idx_base_doc_details_kosgu "
+         "ON BasePaymentDocumentDetails(kosgu_id);"}};
+
+    for (const auto &index : indexes) {
+        if (sqlite_table_exists(db, index.table)) {
+            execute(index.sql);
+        }
+    }
 }
 
 void DatabaseManager::close() {
     if (db) {
-        sqlite3_close(db);
+        int rc = sqlite3_close(db);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to close database cleanly: "
+                      << sqlite3_errmsg(db) << std::endl;
+            sqlite3_close_v2(db);
+        }
         db = nullptr;
     }
 }
@@ -273,6 +357,22 @@ bool DatabaseManager::createDatabase(const std::string &filepath) {
         "FOREIGN KEY(document_id) REFERENCES BasePaymentDocuments(id) ON DELETE CASCADE,"
         "FOREIGN KEY(kosgu_id) REFERENCES KOSGU(id));",
 
+        // Множественные связи платежей банка с документами ЖО4
+        "CREATE TABLE IF NOT EXISTS PaymentBaseDocumentLinks ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "payment_id INTEGER NOT NULL,"
+        "base_document_id INTEGER NOT NULL,"
+        "linked_amount REAL DEFAULT 0.0,"
+        "match_score INTEGER DEFAULT 0,"
+        "match_status TEXT DEFAULT 'suggested',"
+        "match_reason TEXT,"
+        "note TEXT,"
+        "created_at TEXT DEFAULT CURRENT_TIMESTAMP,"
+        "updated_at TEXT DEFAULT CURRENT_TIMESTAMP,"
+        "FOREIGN KEY(payment_id) REFERENCES Payments(id) ON DELETE CASCADE,"
+        "FOREIGN KEY(base_document_id) REFERENCES BasePaymentDocuments(id) ON DELETE CASCADE,"
+        "UNIQUE(payment_id, base_document_id));",
+
         // Справочник REGEX строк
         "CREATE TABLE IF NOT EXISTS Regexes ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -340,6 +440,8 @@ bool DatabaseManager::createDatabase(const std::string &filepath) {
             return false;
         }
     }
+
+    checkAndUpdateDatabaseSchema();
 
     return true;
 }
@@ -2118,6 +2220,224 @@ bool DatabaseManager::CleanOrphanPaymentDetails() {
     return success;
 }
 
+std::vector<IntegrityIssue> DatabaseManager::getIntegrityReport() {
+    std::vector<IntegrityIssue> issues;
+    if (!db) {
+        issues.push_back({"Ошибка", "База данных", "База не открыта"});
+        return issues;
+    }
+
+    auto add_issue = [&](const std::string &severity,
+                         const std::string &check_name,
+                         const std::string &details) {
+        issues.push_back({severity, check_name, details});
+    };
+
+    auto add_count_issue = [&](const std::string &severity,
+                               const std::string &check_name,
+                               const std::string &sql,
+                               const std::string &details_prefix,
+                               const std::string &examples_sql = "") {
+        sqlite3_stmt *stmt = nullptr;
+        int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            add_issue("Ошибка", check_name,
+                      "Не удалось выполнить проверку: " +
+                          std::string(sqlite3_errmsg(db)));
+            return;
+        }
+
+        int count = 0;
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            count = sqlite3_column_int(stmt, 0);
+        }
+        sqlite3_finalize(stmt);
+
+        if (count > 0) {
+            std::string details =
+                details_prefix + ": " + std::to_string(count);
+
+            if (!examples_sql.empty()) {
+                sqlite3_stmt *examples_stmt = nullptr;
+                rc = sqlite3_prepare_v2(db, examples_sql.c_str(), -1,
+                                        &examples_stmt, nullptr);
+                if (rc == SQLITE_OK) {
+                    std::vector<std::string> examples;
+                    while (sqlite3_step(examples_stmt) == SQLITE_ROW) {
+                        const unsigned char *value =
+                            sqlite3_column_text(examples_stmt, 0);
+                        examples.push_back(value ? reinterpret_cast<const char *>(value)
+                                                 : "");
+                    }
+                    sqlite3_finalize(examples_stmt);
+
+                    if (!examples.empty()) {
+                        details += "\nПримеры:";
+                        for (const auto &example : examples) {
+                            details += "\n- " + example;
+                        }
+                    }
+                } else {
+                    details += "\nПримеры не получены: ";
+                    details += sqlite3_errmsg(db);
+                }
+            }
+
+            add_issue(severity, check_name, details);
+        }
+    };
+
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db, "PRAGMA integrity_check;", -1, &stmt, nullptr) ==
+        SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char *value = sqlite3_column_text(stmt, 0);
+            std::string text = value ? reinterpret_cast<const char *>(value)
+                                     : "";
+            if (text != "ok") {
+                add_issue("Критично", "PRAGMA integrity_check", text);
+            }
+        }
+        sqlite3_finalize(stmt);
+    } else {
+        add_issue("Ошибка", "PRAGMA integrity_check", sqlite3_errmsg(db));
+    }
+
+    if (sqlite3_prepare_v2(db, "PRAGMA foreign_key_check;", -1, &stmt,
+                           nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char *table = sqlite3_column_text(stmt, 0);
+            int rowid = sqlite3_column_int(stmt, 1);
+            const unsigned char *parent = sqlite3_column_text(stmt, 2);
+            int fkid = sqlite3_column_int(stmt, 3);
+            std::ostringstream details;
+            details << "table="
+                    << (table ? reinterpret_cast<const char *>(table) : "")
+                    << ", rowid=" << rowid << ", parent="
+                    << (parent ? reinterpret_cast<const char *>(parent) : "")
+                    << ", fk=" << fkid;
+            add_issue("Критично", "PRAGMA foreign_key_check", details.str());
+        }
+        sqlite3_finalize(stmt);
+    } else {
+        add_issue("Ошибка", "PRAGMA foreign_key_check", sqlite3_errmsg(db));
+    }
+
+    add_count_issue(
+        "Критично", "Расшифровки без платежа",
+        "SELECT COUNT(*) FROM PaymentDetails pd "
+        "LEFT JOIN Payments p ON p.id = pd.payment_id "
+        "WHERE p.id IS NULL;",
+        "Количество строк",
+        "SELECT 'PaymentDetail id=' || pd.id || ', payment_id=' || pd.payment_id "
+        "FROM PaymentDetails pd "
+        "LEFT JOIN Payments p ON p.id = pd.payment_id "
+        "WHERE p.id IS NULL "
+        "LIMIT 5;");
+
+    add_count_issue(
+        "Предупреждение", "Платежи без расшифровок",
+        "SELECT COUNT(*) FROM Payments p "
+        "LEFT JOIN PaymentDetails pd ON pd.payment_id = p.id "
+        "WHERE pd.id IS NULL;",
+        "Количество платежей",
+        "SELECT 'Payment id=' || p.id || ', дата=' || p.date || "
+        "', номер=' || IFNULL(p.doc_number, '') || ', сумма=' || p.amount "
+        "FROM Payments p "
+        "LEFT JOIN PaymentDetails pd ON pd.payment_id = p.id "
+        "WHERE pd.id IS NULL "
+        "LIMIT 5;");
+
+    add_count_issue(
+        "Предупреждение", "Документы основания без деталей",
+        "SELECT COUNT(*) FROM BasePaymentDocuments bpd "
+        "LEFT JOIN BasePaymentDocumentDetails d ON d.document_id = bpd.id "
+        "WHERE d.id IS NULL;",
+        "Количество документов",
+        "SELECT 'Документ id=' || bpd.id || ', дата=' || bpd.date || "
+        "', номер=' || bpd.number || ', контрагент=' || IFNULL(bpd.counterparty_name, '') "
+        "FROM BasePaymentDocuments bpd "
+        "LEFT JOIN BasePaymentDocumentDetails d ON d.document_id = bpd.id "
+        "WHERE d.id IS NULL "
+        "LIMIT 5;");
+
+    add_count_issue(
+        "Предупреждение", "Расшифровки платежей без КОСГУ",
+        "SELECT COUNT(*) FROM PaymentDetails WHERE kosgu_id IS NULL;",
+        "Количество строк",
+        "SELECT 'PaymentDetail id=' || id || ', payment_id=' || payment_id || "
+        "', сумма=' || amount "
+        "FROM PaymentDetails WHERE kosgu_id IS NULL LIMIT 5;");
+
+    add_count_issue(
+        "Предупреждение", "Расшифровки документов без КОСГУ",
+        "SELECT COUNT(*) FROM BasePaymentDocumentDetails "
+        "WHERE kosgu_id IS NULL;",
+        "Количество строк",
+        "SELECT 'Деталь ДО id=' || id || ', document_id=' || document_id || "
+        "', сумма=' || amount || ', операция=' || IFNULL(operation_content, '') "
+        "FROM BasePaymentDocumentDetails WHERE kosgu_id IS NULL LIMIT 5;");
+
+    add_count_issue(
+        "Предупреждение", "Платежи с расхождением суммы",
+        "SELECT COUNT(*) FROM ("
+        "SELECT p.id "
+        "FROM Payments p JOIN PaymentDetails pd ON pd.payment_id = p.id "
+        "GROUP BY p.id, p.amount "
+        "HAVING ABS(ABS(p.amount) - ABS(SUM(pd.amount))) > 0.01"
+        ");",
+        "Количество платежей",
+        "SELECT 'Payment id=' || p.id || ', дата=' || p.date || "
+        "', номер=' || IFNULL(p.doc_number, '') || ', платеж=' || p.amount || "
+        "', расшифровки=' || SUM(pd.amount) "
+        "FROM Payments p JOIN PaymentDetails pd ON pd.payment_id = p.id "
+        "GROUP BY p.id, p.date, p.doc_number, p.amount "
+        "HAVING ABS(ABS(p.amount) - ABS(SUM(pd.amount))) > 0.01 "
+        "LIMIT 5;");
+
+    add_count_issue(
+        "Предупреждение", "Дубли платежей",
+        "SELECT COUNT(*) FROM ("
+        "SELECT date, IFNULL(doc_number, ''), amount, "
+        "IFNULL(counterparty_id, -1), IFNULL(description, ''), COUNT(*) c "
+        "FROM Payments "
+        "GROUP BY date, IFNULL(doc_number, ''), amount, "
+        "IFNULL(counterparty_id, -1), IFNULL(description, '') "
+        "HAVING c > 1"
+        ");",
+        "Количество групп дублей",
+        "SELECT 'Дата=' || date || ', номер=' || IFNULL(doc_number, '') || "
+        "', сумма=' || amount || ', дублей=' || COUNT(*) "
+        "FROM Payments "
+        "GROUP BY date, IFNULL(doc_number, ''), amount, "
+        "IFNULL(counterparty_id, -1), IFNULL(description, '') "
+        "HAVING COUNT(*) > 1 "
+        "LIMIT 5;");
+
+    add_count_issue(
+        "Предупреждение", "Дубли документов основания",
+        "SELECT COUNT(*) FROM ("
+        "SELECT number, date, IFNULL(counterparty_name, ''), COUNT(*) c "
+        "FROM BasePaymentDocuments "
+        "GROUP BY number, date, IFNULL(counterparty_name, '') "
+        "HAVING c > 1"
+        ");",
+        "Количество групп дублей",
+        "SELECT 'Дата=' || date || ', номер=' || number || "
+        "', контрагент=' || IFNULL(counterparty_name, '') || "
+        "', дублей=' || COUNT(*) "
+        "FROM BasePaymentDocuments "
+        "GROUP BY number, date, IFNULL(counterparty_name, '') "
+        "HAVING COUNT(*) > 1 "
+        "LIMIT 5;");
+
+    if (issues.empty()) {
+        add_issue("ОК", "Целостность базы", "Проблем не найдено");
+    }
+
+    return issues;
+}
+
 // Callback for generic SELECT queries
 static int callback_collect_data(void *data, int argc, char **argv,
                                  char **azColName) {
@@ -2378,6 +2698,39 @@ int DatabaseManager::getBasePaymentDocumentIdByNumberDate(const std::string& num
     return id;
 }
 
+int DatabaseManager::getBasePaymentDocumentIdBySignature(
+    const std::string& number,
+    const std::string& date,
+    const std::string& document_name,
+    const std::string& counterparty_name) {
+    if (!db) return -1;
+
+    std::string sql =
+        "SELECT id FROM BasePaymentDocuments "
+        "WHERE number = ? AND date = ? "
+        "AND IFNULL(document_name, '') = IFNULL(?, '') "
+        "AND IFNULL(counterparty_name, '') = IFNULL(?, '') "
+        "LIMIT 1;";
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement for getBasePaymentDocumentIdBySignature: "
+                  << sqlite3_errmsg(db) << std::endl;
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, number.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, date.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, document_name.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, counterparty_name.c_str(), -1, SQLITE_STATIC);
+
+    int id = -1;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        id = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    return id;
+}
+
 std::vector<BasePaymentDocument> DatabaseManager::getBasePaymentDocuments() {
     std::vector<BasePaymentDocument> docs;
     if (!db) return docs;
@@ -2495,9 +2848,14 @@ std::vector<ContractPaymentInfo> DatabaseManager::getPaymentInfoForBasePaymentDo
         "SELECT p.id, p.date, p.doc_number, p.amount, p.description, "
         "c.name "
         "FROM Payments p "
-        "JOIN PaymentDetails pd ON p.id = pd.payment_id "
+        "JOIN ("
+        "    SELECT payment_id FROM PaymentDetails WHERE invoice_id = ? "
+        "    UNION "
+        "    SELECT payment_id FROM PaymentBaseDocumentLinks "
+        "    WHERE base_document_id = ? AND IFNULL(match_status, '') <> 'rejected'"
+        ") linked ON linked.payment_id = p.id "
         "LEFT JOIN Counterparties c ON p.counterparty_id = c.id "
-        "WHERE pd.invoice_id = ?;";
+        "ORDER BY p.date DESC, p.id DESC;";
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
@@ -2506,6 +2864,7 @@ std::vector<ContractPaymentInfo> DatabaseManager::getPaymentInfoForBasePaymentDo
         return result;
     }
     sqlite3_bind_int(stmt, 1, doc_id);
+    sqlite3_bind_int(stmt, 2, doc_id);
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         ContractPaymentInfo info;
@@ -2523,6 +2882,156 @@ std::vector<ContractPaymentInfo> DatabaseManager::getPaymentInfoForBasePaymentDo
     }
     sqlite3_finalize(stmt);
     return result;
+}
+
+bool DatabaseManager::addPaymentBaseDocumentLink(PaymentBaseDocumentLink& link) {
+    if (!db || link.payment_id <= 0 || link.base_document_id <= 0) {
+        return false;
+    }
+
+    if (link.match_status.empty()) {
+        link.match_status = "suggested";
+    }
+
+    std::string sql =
+        "INSERT INTO PaymentBaseDocumentLinks "
+        "(payment_id, base_document_id, linked_amount, match_score, "
+        "match_status, match_reason, note) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(payment_id, base_document_id) DO UPDATE SET "
+        "linked_amount = excluded.linked_amount, "
+        "match_score = excluded.match_score, "
+        "match_status = excluded.match_status, "
+        "match_reason = excluded.match_reason, "
+        "note = excluded.note, "
+        "updated_at = CURRENT_TIMESTAMP;";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement for addPaymentBaseDocumentLink: "
+                  << sqlite3_errmsg(db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_int(stmt, 1, link.payment_id);
+    sqlite3_bind_int(stmt, 2, link.base_document_id);
+    sqlite3_bind_double(stmt, 3, link.linked_amount);
+    sqlite3_bind_int(stmt, 4, link.match_score);
+    sqlite3_bind_text(stmt, 5, link.match_status.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 6, link.match_reason.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 7, link.note.c_str(), -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Failed to add PaymentBaseDocumentLink: "
+                  << sqlite3_errmsg(db) << std::endl;
+        return false;
+    }
+
+    sqlite3_stmt* id_stmt = nullptr;
+    std::string id_sql =
+        "SELECT id FROM PaymentBaseDocumentLinks "
+        "WHERE payment_id = ? AND base_document_id = ?;";
+    if (sqlite3_prepare_v2(db, id_sql.c_str(), -1, &id_stmt, nullptr) ==
+        SQLITE_OK) {
+        sqlite3_bind_int(id_stmt, 1, link.payment_id);
+        sqlite3_bind_int(id_stmt, 2, link.base_document_id);
+        if (sqlite3_step(id_stmt) == SQLITE_ROW) {
+            link.id = sqlite3_column_int(id_stmt, 0);
+        }
+    }
+    sqlite3_finalize(id_stmt);
+    return true;
+}
+
+static PaymentBaseDocumentLink readPaymentBaseDocumentLink(sqlite3_stmt* stmt) {
+    PaymentBaseDocumentLink link;
+    link.id = sqlite3_column_int(stmt, 0);
+    link.payment_id = sqlite3_column_int(stmt, 1);
+    link.base_document_id = sqlite3_column_int(stmt, 2);
+    link.linked_amount = sqlite3_column_double(stmt, 3);
+    link.match_score = sqlite3_column_int(stmt, 4);
+    const unsigned char* text = sqlite3_column_text(stmt, 5);
+    link.match_status = text ? reinterpret_cast<const char*>(text) : "";
+    text = sqlite3_column_text(stmt, 6);
+    link.match_reason = text ? reinterpret_cast<const char*>(text) : "";
+    text = sqlite3_column_text(stmt, 7);
+    link.note = text ? reinterpret_cast<const char*>(text) : "";
+    return link;
+}
+
+static std::vector<PaymentBaseDocumentLink> getPaymentBaseDocumentLinks(
+    sqlite3* db,
+    const std::string& sql,
+    int id) {
+    std::vector<PaymentBaseDocumentLink> links;
+    if (!db) {
+        return links;
+    }
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement for getPaymentBaseDocumentLinks: "
+                  << sqlite3_errmsg(db) << std::endl;
+        return links;
+    }
+
+    sqlite3_bind_int(stmt, 1, id);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        links.push_back(readPaymentBaseDocumentLink(stmt));
+    }
+    sqlite3_finalize(stmt);
+    return links;
+}
+
+std::vector<PaymentBaseDocumentLink>
+DatabaseManager::getPaymentBaseDocumentLinksForPayment(int payment_id) {
+    return getPaymentBaseDocumentLinks(
+        db,
+        "SELECT id, payment_id, base_document_id, linked_amount, match_score, "
+        "match_status, match_reason, note "
+        "FROM PaymentBaseDocumentLinks "
+        "WHERE payment_id = ? "
+        "ORDER BY match_status = 'confirmed' DESC, match_score DESC, id DESC;",
+        payment_id);
+}
+
+std::vector<PaymentBaseDocumentLink>
+DatabaseManager::getPaymentBaseDocumentLinksForDocument(int base_document_id) {
+    return getPaymentBaseDocumentLinks(
+        db,
+        "SELECT id, payment_id, base_document_id, linked_amount, match_score, "
+        "match_status, match_reason, note "
+        "FROM PaymentBaseDocumentLinks "
+        "WHERE base_document_id = ? "
+        "ORDER BY match_status = 'confirmed' DESC, match_score DESC, id DESC;",
+        base_document_id);
+}
+
+bool DatabaseManager::deletePaymentBaseDocumentLink(int link_id) {
+    if (!db) return false;
+
+    std::string sql = "DELETE FROM PaymentBaseDocumentLinks WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement for deletePaymentBaseDocumentLink: "
+                  << sqlite3_errmsg(db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_int(stmt, 1, link_id);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        std::cerr << "Failed to delete PaymentBaseDocumentLink: "
+                  << sqlite3_errmsg(db) << std::endl;
+        return false;
+    }
+    return true;
 }
 
 // ==================== BasePaymentDocumentDetail Methods ====================
@@ -2754,6 +3263,41 @@ int DatabaseManager::getBasePaymentDocumentDetailIdByContent(int document_id, co
     return id;
 }
 
+int DatabaseManager::getBasePaymentDocumentDetailIdBySignature(const BasePaymentDocumentDetail& detail) {
+    if (!db) return -1;
+
+    std::string sql =
+        "SELECT id FROM BasePaymentDocumentDetails "
+        "WHERE document_id = ? "
+        "AND IFNULL(operation_content, '') = IFNULL(?, '') "
+        "AND IFNULL(debit_account, '') = IFNULL(?, '') "
+        "AND IFNULL(credit_account, '') = IFNULL(?, '') "
+        "AND IFNULL(kosgu_id, -1) = ? "
+        "AND ABS(amount - ?) <= 0.01 "
+        "LIMIT 1;";
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement for getBasePaymentDocumentDetailIdBySignature: "
+                  << sqlite3_errmsg(db) << std::endl;
+        return -1;
+    }
+
+    sqlite3_bind_int(stmt, 1, detail.document_id);
+    sqlite3_bind_text(stmt, 2, detail.operation_content.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, detail.debit_account.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, detail.credit_account.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 5, detail.kosgu_id > 0 ? detail.kosgu_id : -1);
+    sqlite3_bind_double(stmt, 6, detail.amount);
+
+    int id = -1;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        id = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    return id;
+}
+
 // ==================== Автоподбор платежа из банка ====================
 
 // Вспомогательная функция для улучшенного сравнения наименований контрагентов
@@ -2926,6 +3470,62 @@ static bool counterpartyNamesMatch(const std::string& name1, const std::string& 
     return matches >= threshold;
 }
 
+static std::string normalizeDocumentNumber(const std::string& value) {
+    std::string result;
+    result.reserve(value.size());
+    for (unsigned char c : value) {
+        if (std::isalnum(c)) {
+            result.push_back(static_cast<char>(std::tolower(c)));
+        }
+    }
+    return result;
+}
+
+static bool paymentTextContainsDocumentNumber(const std::string& doc_number,
+                                              const std::string& text) {
+    std::string normalized_doc = normalizeDocumentNumber(doc_number);
+    if (normalized_doc.empty()) {
+        return false;
+    }
+
+    std::string normalized_text = normalizeDocumentNumber(text);
+    if (normalized_text.find(normalized_doc) != std::string::npos) {
+        return true;
+    }
+
+    std::string lower_text = text;
+    std::transform(lower_text.begin(), lower_text.end(), lower_text.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    try {
+        std::regex doc_context(
+            "(упд|акт|счет|сч|накладн|документ\\s+о\\s+приемк|приемк)"
+            "[^0-9a-zа-я]{0,20}"
+            "([0-9a-zа-я/_.-]{1,40})",
+            std::regex_constants::icase);
+
+        auto begin = std::sregex_iterator(lower_text.begin(), lower_text.end(),
+                                          doc_context);
+        auto end = std::sregex_iterator();
+        for (auto it = begin; it != end; ++it) {
+            if ((*it).size() < 3) {
+                continue;
+            }
+            std::string candidate = normalizeDocumentNumber((*it)[2].str());
+            if (!candidate.empty() &&
+                (candidate == normalized_doc ||
+                 candidate.find(normalized_doc) != std::string::npos ||
+                 normalized_doc.find(candidate) != std::string::npos)) {
+                return true;
+            }
+        }
+    } catch (const std::regex_error&) {
+        return false;
+    }
+
+    return false;
+}
+
 std::vector<DatabaseManager::PaymentMatch> DatabaseManager::findMatchingPayments(const BasePaymentDocument& doc, bool require_counterparty) {
     std::vector<PaymentMatch> matches;
     if (!db) return matches;
@@ -2980,21 +3580,20 @@ std::vector<DatabaseManager::PaymentMatch> DatabaseManager::findMatchingPayments
             match.match_reasons += "Дата; ";
         }
 
-        // 3. Номер документа в назначении платежа (description) — самый весомый
+        // 3. Номер первичного документа в назначении платежа.
         if (!doc.number.empty() && !match.description.empty()) {
-            std::string doc_num = doc.number;
-            std::string desc = match.description;
-            std::transform(doc_num.begin(), doc_num.end(), doc_num.begin(), ::tolower);
-            std::transform(desc.begin(), desc.end(), desc.begin(), ::tolower);
-            
-            if (desc.find(doc_num) != std::string::npos) {
+            if (paymentTextContainsDocumentNumber(doc.number, match.description)) {
                 match.match_score += 45;
-                match.match_reasons += "Номер в назначении; ";
+                match.match_reasons += "Номер первичного документа в назначении; ";
             }
         }
 
-        // 4. Совпадение по контрагенту
+        // 4. Совпадение по контрагенту. В ЖО4 и банке названия часто
+        // отличаются, поэтому контрагент усиливает оценку, но не является
+        // жестким фильтром.
         bool counterparty_match = false;
+        bool has_counterparty_data =
+            !doc.counterparty_name.empty() && !match.counterparty_name.empty();
         if (!doc.counterparty_name.empty() && !match.counterparty_name.empty()) {
             counterparty_match = counterpartyNamesMatch(doc.counterparty_name, match.counterparty_name);
             if (counterparty_match) {
@@ -3003,9 +3602,13 @@ std::vector<DatabaseManager::PaymentMatch> DatabaseManager::findMatchingPayments
             }
         }
 
-        // Контрагент — обязательный критерий (если включён)
-        if (require_counterparty && !counterparty_match) {
-            continue;
+        if (!counterparty_match) {
+            if (require_counterparty && has_counterparty_data) {
+                match.match_score -= 10;
+                match.match_reasons += "Контрагент отличается; ";
+            } else if (!has_counterparty_data) {
+                match.match_reasons += "Контрагент не сравнен; ";
+            }
         }
 
         // Добавляем только если есть хоть какое-то совпадение помимо контрагента
@@ -3029,6 +3632,18 @@ std::vector<DatabaseManager::PaymentMatch> DatabaseManager::findMatchingPayments
 
 bool DatabaseManager::linkBasePaymentDocumentToPayment(int doc_id, int payment_id) {
     if (!db) return false;
+
+    PaymentBaseDocumentLink link;
+    link.payment_id = payment_id;
+    link.base_document_id = doc_id;
+    link.linked_amount = 0.0;
+    link.match_score = 100;
+    link.match_status = "confirmed";
+    link.match_reason = "Ручная связь";
+
+    if (!addPaymentBaseDocumentLink(link)) {
+        return false;
+    }
     
     std::string sql = "UPDATE BasePaymentDocuments SET payment_id = ? WHERE id = ?;";
     sqlite3_stmt* stmt = nullptr;
