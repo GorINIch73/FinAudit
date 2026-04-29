@@ -1,0 +1,1686 @@
+#include "PaymentsView.h"
+#include "../Contract.h"
+#include "../IconsFontAwesome6.h"
+#include "../BasePaymentDocument.h"
+#include "../UIManager.h"
+#include "CustomWidgets.h"
+#include <algorithm> // для std::sort
+#include <cstring>   // Для strcasestr и memset
+#include <ctime>
+#include <iomanip>
+#include <iostream>
+#include <regex>
+#include <sstream>
+#include <string>
+
+#include "../UIManager.h"
+
+PaymentsView::PaymentsView()
+    : selectedPaymentIndex(-1),
+      isAdding(false),
+      isDirty(false),
+      selectedDetailIndex(-1),
+      isAddingDetail(false),
+      isDetailDirty(false),
+      scroll_to_item_index(-1) {
+    Title = "Справочник 'Банк' (Платежи)";
+    memset(filterText, 0, sizeof(filterText)); // Инициализация filterText
+    memset(counterpartyFilter, 0, sizeof(counterpartyFilter));
+    memset(kosguFilter, 0, sizeof(kosguFilter));
+    memset(contractFilter, 0, sizeof(contractFilter));
+    memset(invoiceFilter, 0, sizeof(invoiceFilter));
+    memset(groupKosguFilter, 0, sizeof(groupKosguFilter));
+    memset(groupContractFilter, 0, sizeof(groupContractFilter));
+    memset(groupInvoiceFilter, 0, sizeof(groupInvoiceFilter));
+}
+
+void PaymentsView::SetUIManager(UIManager *manager) { uiManager = manager; }
+
+void PaymentsView::SetDatabaseManager(DatabaseManager *manager) {
+    dbManager = manager;
+}
+
+void PaymentsView::SetPdfReporter(PdfReporter *reporter) {
+    pdfReporter = reporter;
+}
+
+void PaymentsView::RefreshData() {
+    if (dbManager) {
+        payments = dbManager->getPayments();
+        UpdateFilteredPayments(); // Ensure the filter is applied to the new
+                                  // data
+        selectedPaymentIndex = -1;
+        paymentDetails.clear();
+        selectedDetailIndex = -1;
+    }
+}
+
+void PaymentsView::RefreshDropdownData() {
+    if (dbManager) {
+        counterpartiesForDropdown = dbManager->getCounterparties();
+        kosguForDropdown = dbManager->getKosguEntries();
+        contractsForDropdown = dbManager->getContracts();
+        baseDocsForDropdown = dbManager->getBasePaymentDocuments();
+        suspiciousWordsForFilter = dbManager->getSuspiciousWords();
+    }
+}
+
+std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>>
+PaymentsView::GetDataAsStrings() {
+    std::vector<std::string> headers = {"Дата",  "Номер",      "Тип",
+                                        "Сумма", "Получатель", "Назначение"};
+    std::vector<std::vector<std::string>> rows; // Declared here
+
+    for (const auto &p : payments) {
+        rows.push_back({p.date, p.doc_number,
+                        (p.type ? "поступление" : "расход"),
+                        std::to_string(p.amount), p.recipient, p.description});
+    }
+    return {headers, rows};
+}
+
+void PaymentsView::OnDeactivate() {
+    SaveChanges();
+    SaveDetailChanges();
+}
+void PaymentsView::ForceSave() {
+    SaveChanges();
+    SaveDetailChanges();
+}
+
+void PaymentsView::SaveChanges() {
+    if (!isDirty)
+        return;
+
+    if (dbManager && selectedPayment.id != -1) {
+        selectedPayment.description = descriptionBuffer;
+        selectedPayment.note = noteBuffer;
+        dbManager->updatePayment(selectedPayment);
+
+        // Обновляем из БД и применяем сортировку
+        payments = dbManager->getPayments();
+        m_filtered_payments = payments;
+        UpdateFilteredPayments();
+        ApplyStoredSorting();
+        // Находим обновлённую запись
+        for (int i = 0; i < (int)m_filtered_payments.size(); i++) {
+            if (m_filtered_payments[i].id == selectedPayment.id) {
+                selectedPaymentIndex = i;
+                selectedPayment = m_filtered_payments[i];
+                break;
+            }
+        }
+        originalPayment = selectedPayment;
+        descriptionBuffer = selectedPayment.description;
+        noteBuffer = selectedPayment.note;
+    }
+    isDirty = false;
+}
+
+void PaymentsView::SaveDetailChanges() {
+    if (!isDetailDirty)
+        return;
+
+    if (dbManager && selectedPayment.id != -1 && selectedDetail.id != -1) {
+        dbManager->updatePaymentDetail(selectedDetail);
+
+        auto it = std::find_if(
+            paymentDetails.begin(), paymentDetails.end(),
+            [&](const PaymentDetail &d) { return d.id == selectedDetail.id; });
+        if (it != paymentDetails.end()) {
+            *it = selectedDetail;
+        }
+    }
+
+    isDetailDirty = false;
+}
+
+void PaymentsView::SortPayments(const ImGuiTableSortSpecs *sort_specs) {
+    // Сохраняем текущую сортировку
+    StoreSortSpecs(sort_specs);
+
+    std::sort(m_filtered_payments.begin(), m_filtered_payments.end(),
+              [&](const Payment &a, const Payment &b) {
+                  for (int i = 0; i < sort_specs->SpecsCount; i++) {
+                      const ImGuiTableColumnSortSpecs *column_spec =
+                          &sort_specs->Specs[i];
+                      int delta = 0;
+                      switch (column_spec->ColumnIndex) {
+                      case 0:
+                          delta = a.date.compare(b.date);
+                          break;
+                      case 1:
+                          delta = a.doc_number.compare(b.doc_number);
+                          break;
+                      case 2:
+                          delta = (a.amount < b.amount)   ? -1
+                                  : (a.amount > b.amount) ? 1
+                                                          : 0;
+                          break;
+                      case 3: {
+                          std::string a_cp_name = " ";
+                          std::string b_cp_name = " ";
+                          auto it_a = std::find_if(
+                              counterpartiesForDropdown.begin(),
+                              counterpartiesForDropdown.end(),
+                              [&](const Counterparty &cp) {
+                                  return cp.id == a.counterparty_id;
+                              });
+                          if (it_a != counterpartiesForDropdown.end())
+                              a_cp_name = it_a->name;
+                          auto it_b = std::find_if(
+                              counterpartiesForDropdown.begin(),
+                              counterpartiesForDropdown.end(),
+                              [&](const Counterparty &cp) {
+                                  return cp.id == b.counterparty_id;
+                              });
+                          if (it_b != counterpartiesForDropdown.end())
+                              b_cp_name = it_b->name;
+                          delta = a_cp_name.compare(b_cp_name);
+                          break;
+                      }
+                      case 4:
+                          delta = a.description.compare(b.description);
+                          break;
+                      case 5:
+                          delta = a.note.compare(b.note);
+                          break;
+                      default:
+                          break;
+                      }
+                      if (delta != 0) {
+                          return (column_spec->SortDirection ==
+                                  ImGuiSortDirection_Ascending)
+                                     ? (delta < 0)
+                                     : (delta > 0);
+                      }
+                  }
+                  return false;
+              });
+}
+
+void PaymentsView::StoreSortSpecs(const ImGuiTableSortSpecs* sort_specs) {
+    m_stored_sort_specs.clear();
+    if (sort_specs && sort_specs->SpecsCount > 0) {
+        for (int i = 0; i < sort_specs->SpecsCount; i++) {
+            m_stored_sort_specs.push_back({
+                sort_specs->Specs[i].ColumnIndex,
+                sort_specs->Specs[i].SortDirection
+            });
+        }
+    }
+}
+
+void PaymentsView::ApplyStoredSorting() {
+    if (m_stored_sort_specs.empty()) {
+        return;
+    }
+    std::vector<ImGuiTableColumnSortSpecs> fake_specs(m_stored_sort_specs.size());
+    for (size_t i = 0; i < m_stored_sort_specs.size(); i++) {
+        fake_specs[i].ColumnIndex = m_stored_sort_specs[i].column_index;
+        fake_specs[i].SortDirection = static_cast<ImGuiSortDirection>(m_stored_sort_specs[i].sort_direction);
+    }
+    ImGuiTableSortSpecs wrapped_specs;
+    wrapped_specs.Specs = fake_specs.data();
+    wrapped_specs.SpecsCount = fake_specs.size();
+    SortPayments(&wrapped_specs);
+}
+
+void PaymentsView::Render() {
+    if (!IsVisible) {
+        if (isDirty) {
+            SaveChanges();
+            SaveDetailChanges();
+        }
+        return;
+    }
+
+    // Handle chunked group operation processing
+    if (current_operation != NONE) {
+        ProcessGroupOperation();
+    }
+
+    if (ImGui::Begin(GetTitle(), &IsVisible)) {
+
+        if (dbManager && payments.empty()) {
+            RefreshData();
+            RefreshDropdownData();
+            UpdateFilteredPayments(); // Initial filter
+        }
+
+        // --- Progress Bar Popup ---
+        if (current_operation != NONE) {
+            ImGui::OpenPopup("Выполнение операции...");
+        }
+        if (ImGui::BeginPopupModal("Выполнение операции...", NULL,
+                                   ImGuiWindowFlags_AlwaysAutoResize |
+                                       ImGuiWindowFlags_NoMove)) {
+            if (current_operation == NONE) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::Text("Обработка %d из %zu...", processed_items,
+                        items_to_process.size());
+            float progress =
+                (items_to_process.empty())
+                    ? 0.0f
+                    : (float)processed_items / (float)items_to_process.size();
+            ImGui::ProgressBar(progress, ImVec2(250.0f, 0.0f));
+            ImGui::EndPopup();
+        }
+
+        // --- Панель управления ---
+        if (ImGui::Button(ICON_FA_PLUS " Добавить")) {
+            SaveChanges();
+            SaveDetailChanges();
+
+            Payment newPayment{};
+            newPayment.type = false;
+            auto t = std::time(nullptr);
+            auto tm = *std::localtime(&t);
+            std::ostringstream oss;
+            oss << std::put_time(&tm, "%Y-%m-%d");
+            newPayment.date = oss.str();
+
+            int new_id = -1;
+            if (dbManager) {
+                dbManager->addPayment(newPayment);
+                new_id = newPayment.id;
+                payments = dbManager->getPayments();
+                m_filtered_payments = payments;
+                UpdateFilteredPayments();
+                ApplyStoredSorting();
+            }
+
+            // Находим новую запись в отсортированном списке
+            selectedPaymentIndex = -1;
+            scroll_to_item_index = -1;
+            scroll_pending = false;
+            for (int i = 0; i < (int)m_filtered_payments.size(); i++) {
+                if (m_filtered_payments[i].id == new_id) {
+                    selectedPaymentIndex = i;
+                    scroll_to_item_index = i;
+                    break;
+                }
+            }
+            if (selectedPaymentIndex == -1) {
+                // Новая запись отфильтрована — добавляем вручную
+                auto new_it = std::find_if(payments.begin(), payments.end(),
+                    [&](const Payment &p) { return p.id == new_id; });
+                if (new_it != payments.end()) {
+                    m_filtered_payments.push_back(*new_it);
+                    ApplyStoredSorting();
+                    for (int i = 0; i < (int)m_filtered_payments.size(); i++) {
+                        if (m_filtered_payments[i].id == new_id) {
+                            selectedPaymentIndex = i;
+                            scroll_to_item_index = i;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (selectedPaymentIndex != -1) {
+                selectedPayment = m_filtered_payments[selectedPaymentIndex];
+                originalPayment = selectedPayment;
+            }
+            descriptionBuffer = selectedPayment.description;
+            noteBuffer = selectedPayment.note;
+            paymentDetails = dbManager ? dbManager->getPaymentDetails(new_id > 0 ? new_id : selectedPayment.id) : std::vector<PaymentDetail>();
+            isAdding = false;
+            isDirty = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_TRASH " Удалить")) {
+            if (selectedPaymentIndex != -1) {
+                payment_id_to_delete = payments[selectedPaymentIndex].id;
+                show_delete_payment_popup = true;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_ROTATE_RIGHT " Обновить")) {
+            SaveChanges();
+            SaveDetailChanges();
+            RefreshData();
+            RefreshDropdownData();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_LIST " Отчет по расшифровкам")) {
+            if (uiManager) {
+                std::string query =
+                    "SELECT p.date AS 'Дата', p.doc_number AS 'Номер док.', "
+                    "p.type AS 'Тип', p.amount AS 'Сумма платежа', "
+                    "pd.amount AS 'Сумма расшифровки', "
+                    "k.code AS 'КОСГУ', k.name AS 'Наименование КОСГУ', "
+                    "c.name AS 'Контрагент', "
+                    "p.description AS 'Назначение' "
+                    "FROM Payments p "
+                    "JOIN PaymentDetails pd ON p.id = pd.payment_id "
+                    "LEFT JOIN KOSGU k ON pd.kosgu_id = k.id "
+                    "LEFT JOIN Counterparties c ON p.counterparty_id = c.id ";
+
+                // Добавляем WHERE для фильтрации по выбранным платежам
+                if (filterText[0] != '\0') {
+                    query += "WHERE (LOWER(p.date) LIKE LOWER('%" +
+                             std::string(filterText) +
+                             "%') "
+                             "OR LOWER(p.doc_number) LIKE LOWER('%" +
+                             std::string(filterText) +
+                             "%') "
+                             "OR LOWER(p.amount) LIKE LOWER('%" +
+                             std::string(filterText) +
+                             "%') "
+                             "OR LOWER(p.description) LIKE LOWER('%" +
+                             std::string(filterText) +
+                             "%') "
+                             "OR LOWER(p.recipient) LIKE LOWER('%" +
+                             std::string(filterText) +
+                             "%') "
+                             "OR LOWER(k.code) LIKE LOWER('%" +
+                             std::string(filterText) +
+                             "%') "
+                             "OR LOWER(k.name) LIKE LOWER('%" +
+                             std::string(filterText) +
+                             "%') "
+                             "OR LOWER(c.name) LIKE LOWER('%" +
+                             std::string(filterText) + "%'))";
+                }
+                query += ";";
+
+                uiManager->CreateSpecialQueryView(
+                    "Отчет по расшифровкам платежей", query);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Сверка с банком")) {
+            if (uiManager) {
+                // std::string query = "SELECT * FROM payments;"; // Placeholder
+                // /
+                std::string query =
+                    "SELECT STRFTIME('%Y', p.date) AS payment_year,k.code AS "
+                    "kosgu_code,p.type AS payment_type, k.name AS kosgu_name, "
+                    "SUM(pd.amount) AS total_amount FROM PaymentDetails AS pd "
+                    "JOIN Payments AS p  ON pd.payment_id = p.id JOIN KOSGU AS "
+                    "k ON pd.kosgu_id = k.id WHERE k.code IS NOT NULL AND "
+                    "k.code != '' GROUP BY payment_year, payment_type, "
+                    "kosgu_code ORDER BY payment_year, "
+                    "payment_type, kosgu_code;";
+                uiManager->CreateSpecialQueryView("Сверка с банком", query);
+            }
+        }
+
+        // --- Delete Confirmation Popups ---
+        if (CustomWidgets::ConfirmationModal(
+                "Подтверждение удаления", "Подтверждение удаления",
+                "Вы уверены, что хотите удалить этот платеж?\nЭто действие "
+                "нельзя отменить.",
+                "Да", "Нет", show_delete_payment_popup)) {
+            if (dbManager && payment_id_to_delete != -1) {
+                dbManager->deletePayment(payment_id_to_delete);
+                RefreshData();
+                selectedPayment = Payment{};
+                originalPayment = Payment{};
+                descriptionBuffer.clear();
+                paymentDetails.clear();
+                isDirty = false;
+            }
+            payment_id_to_delete = -1;
+        }
+
+        char group_delete_message[256];
+        snprintf(group_delete_message, sizeof(group_delete_message),
+                 "Вы уверены, что хотите удалить расшифровки для %zu платежей?",
+                 m_filtered_payments.size());
+
+        if (CustomWidgets::ConfirmationModal(
+                "Удалить все расшифровки?", "Удалить все расшифровки?",
+                group_delete_message, "Да", "Нет", show_group_delete_popup)) {
+            if (!m_filtered_payments.empty() && current_operation == NONE) {
+                items_to_process = m_filtered_payments;
+                processed_items = 0;
+                current_operation = DELETE_DETAILS;
+            }
+        }
+
+        ImGui::Separator();
+
+        bool filter_changed = false;
+        if (ImGui::InputText("Фильтр", filterText, sizeof(filterText))) {
+            filter_changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_XMARK)) {
+            filterText[0] = '\0';
+            filter_changed = true;
+        }
+
+        ImGui::SameLine();
+        float avail_width = ImGui::GetContentRegionAvail().x;
+        ImGui::PushItemWidth(avail_width - ImGui::GetStyle().ItemSpacing.x);
+        const char *filter_items[] = {
+            "Все",           "Без КОСГУ",       "Без Договора",
+            "Без Накладной", "Без расшифровок", "Подозрительные слова",
+            "Поступления",   "С примечанием"};
+        if (ImGui::Combo("Фильтр по расшифровкам", &missing_info_filter_index,
+                         filter_items, IM_ARRAYSIZE(filter_items))) {
+            filter_changed = true;
+        }
+        ImGui::PopItemWidth();
+
+        if (filter_changed) {
+            SaveChanges();
+            UpdateFilteredPayments();
+        }
+
+        if (ImGui::CollapsingHeader("Групповые операции")) {
+
+            if (ImGui::Button("Добавить расшифровку по КОСГУ")) {
+                if (!m_filtered_payments.empty() && current_operation == NONE) {
+                    show_add_kosgu_popup = true;
+                    groupKosguId = -1;
+                    memset(groupKosguFilter, 0, sizeof(groupKosguFilter));
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Заменить")) {
+                if (!m_filtered_payments.empty() && current_operation == NONE) {
+                    show_replace_popup = true;
+                    // Reset state for the popup
+                    replacement_target = 0;
+                    replacement_kosgu_id = -1;
+                    replacement_contract_id = -1;
+                    replacement_base_document_id = -1;
+                    memset(replacement_kosgu_filter, 0,
+                           sizeof(replacement_kosgu_filter));
+                    memset(replacement_contract_filter, 0,
+                           sizeof(replacement_contract_filter));
+                    memset(replacement_invoice_filter, 0,
+                           sizeof(replacement_invoice_filter));
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Определить по regex и проставить")) {
+                if (!m_filtered_payments.empty() && current_operation == NONE) {
+                    show_apply_regex_popup = true;
+                    // Reset state
+                    regex_target = 0;
+                    selected_regex_id = -1;
+                    memset(regex_filter, 0, sizeof(regex_filter));
+                    if (dbManager) {
+                        regexesForDropdown = dbManager->getRegexes();
+                    }
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Удалить расшифровки")) {
+                if (!m_filtered_payments.empty() && current_operation == NONE) {
+                    show_group_delete_popup = true;
+                }
+            }
+        }
+
+        if (show_add_kosgu_popup) {
+            ImGui::OpenPopup("Добавление расшифровки по КОСГУ");
+        }
+
+        if (show_apply_regex_popup) {
+            ImGui::OpenPopup("Определить по regex");
+        }
+        if (ImGui::BeginPopupModal("Определить по regex",
+                                   &show_apply_regex_popup,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Применить regex для %zu отфильтрованных платежей:",
+                        m_filtered_payments.size());
+            ImGui::Text("Будет обновлена первая расшифровка без установленного "
+                        "значения.\nДля КОСГУ будет добавлена расшифровка по "
+                        "остатку если нужно.");
+
+            ImGui::Separator();
+            ImGui::RadioButton("Договор", &regex_target, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("КОСГУ", &regex_target, 1);
+            ImGui::Separator();
+
+            std::vector<CustomWidgets::ComboItem> regexItems;
+            for (const auto &r : regexesForDropdown) {
+                regexItems.push_back({r.id, r.name});
+            }
+            CustomWidgets::ComboWithFilter("Выбор Regex", selected_regex_id,
+                                           regexItems, regex_filter,
+                                           sizeof(regex_filter), 0);
+
+            ImGui::Separator();
+            if (ImGui::Button("Найти и проставить", ImVec2(120, 0))) {
+                if (dbManager && selected_regex_id != -1 &&
+                    !m_filtered_payments.empty() && current_operation == NONE) {
+                    items_to_process = m_filtered_payments;
+                    processed_items = 0;
+                    current_operation = APPLY_REGEX;
+                }
+                show_apply_regex_popup = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Отмена", ImVec2(120, 0))) {
+                show_apply_regex_popup = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopupModal("Добавление расшифровки по КОСГУ",
+                                   &show_add_kosgu_popup,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Добавить расшифровку с КОСГУ для %zu отфильтрованных "
+                        "платежей:",
+                        m_filtered_payments.size());
+            ImGui::Separator();
+
+            std::vector<CustomWidgets::ComboItem> kosguItems;
+            for (const auto &k : kosguForDropdown) {
+                kosguItems.push_back({k.id, k.code + " " + k.name});
+            }
+            CustomWidgets::ComboWithFilter("КОСГУ", groupKosguId, kosguItems,
+                                           groupKosguFilter,
+                                           sizeof(groupKosguFilter), 0);
+
+            ImGui::Separator();
+
+            if (ImGui::Button("ОК", ImVec2(120, 0))) {
+                if (dbManager && groupKosguId != -1 &&
+                    !m_filtered_payments.empty() && current_operation == NONE) {
+                    items_to_process = m_filtered_payments;
+                    processed_items = 0;
+                    current_operation = ADD_KOSGU;
+                }
+                show_add_kosgu_popup = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SetItemDefaultFocus();
+            ImGui::SameLine();
+            if (ImGui::Button("Отмена", ImVec2(120, 0))) {
+                show_add_kosgu_popup = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (show_replace_popup) {
+            ImGui::OpenPopup("Замена в расшифровках");
+        }
+
+        if (ImGui::BeginPopupModal("Замена в расшифровках", &show_replace_popup,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Заменить во всех расшифровках для %zu отфильтрованных "
+                        "платежей:",
+                        m_filtered_payments.size());
+
+            ImGui::Separator();
+
+            ImGui::RadioButton("КОСГУ", &replacement_target, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("Договор", &replacement_target, 1);
+
+            ImGui::Separator();
+
+            if (replacement_target == 0) {
+                std::vector<CustomWidgets::ComboItem> kosguItems;
+                for (const auto &k : kosguForDropdown) {
+                    kosguItems.push_back({k.id, k.code + " " + k.name});
+                }
+                CustomWidgets::ComboWithFilter(
+                    "Новый КОСГУ", replacement_kosgu_id, kosguItems,
+                    replacement_kosgu_filter, sizeof(replacement_kosgu_filter),
+                    0);
+            } else {
+                std::vector<CustomWidgets::ComboItem> contractItems;
+                for (const auto &c : contractsForDropdown) {
+                    contractItems.push_back({c.id, c.number + " " + c.date});
+                }
+                CustomWidgets::ComboWithFilter(
+                    "Новый Договор", replacement_contract_id, contractItems,
+                    replacement_contract_filter,
+                    sizeof(replacement_contract_filter), 0);
+            }
+
+            ImGui::Separator();
+
+            if (ImGui::Button("ОК", ImVec2(120, 0))) {
+                if (dbManager && !m_filtered_payments.empty() &&
+                    current_operation == NONE) {
+
+                    int new_id = -1;
+                    if (replacement_target == 0)
+                        new_id = replacement_kosgu_id;
+                    else if (replacement_target == 1)
+                        new_id = replacement_contract_id;
+                    else
+                        new_id = replacement_base_document_id;
+
+                    if (new_id != -1) {
+                        items_to_process = m_filtered_payments;
+                        processed_items = 0;
+                        current_operation = REPLACE;
+                    }
+                }
+                show_replace_popup = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SetItemDefaultFocus();
+            ImGui::SameLine();
+            if (ImGui::Button("Отмена", ImVec2(120, 0))) {
+                show_replace_popup = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        // --- Totals Display ---
+        ImGui::Separator();
+        ImGui::Text("платежей: %zu", m_filtered_payments.size());
+        // ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 750);
+        ImGui::SameLine();
+        ImGui::Text("Сумма: %.2f", total_filtered_amount);
+        ImGui::SameLine();
+        // ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 400);
+        ImGui::Text("// %.2f", total_filtered_details_amount);
+
+        // --- Список платежей ---
+        ImGui::BeginChild("PaymentsList", ImVec2(0, list_view_height), true,
+                          ImGuiWindowFlags_HorizontalScrollbar);
+        if (ImGui::BeginTable("payments_table", 6,
+                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                  ImGuiTableFlags_Resizable |
+                                  ImGuiTableFlags_Sortable |
+                                  ImGuiTableFlags_ScrollX)) {
+            ImGui::TableSetupColumn(
+                "Дата",
+                ImGuiTableColumnFlags_DefaultSort |
+                    ImGuiTableColumnFlags_PreferSortDescending,
+                0.0f, 0);
+            ImGui::TableSetupColumn("Номер", 0, 0.0f, 1);
+            ImGui::TableSetupColumn("Сумма", 0, 0.0f, 2);
+            ImGui::TableSetupColumn("Контрагент", 0, 0.0f, 3);
+            ImGui::TableSetupColumn(
+                "Назначение", ImGuiTableColumnFlags_WidthFixed, 600.0f, 4);
+            ImGui::TableSetupColumn(
+                "Примечание", ImGuiTableColumnFlags_WidthFixed, 300.0f, 5);
+            ImGui::TableHeadersRow();
+
+            if (ImGuiTableSortSpecs *sort_specs = ImGui::TableGetSortSpecs()) {
+                if (sort_specs->SpecsDirty) {
+                    SortPayments(sort_specs);
+                    sort_specs->SpecsDirty = false;
+                }
+            }
+
+            // Прокрутка к новой записи: SetScrollY вызывается ОДИН раз
+            if (scroll_to_item_index >= 0 && scroll_to_item_index < (int)m_filtered_payments.size()) {
+                if (!scroll_pending) {
+                    float row_y = scroll_to_item_index * ImGui::GetTextLineHeightWithSpacing();
+                    ImGui::SetScrollY(row_y);
+                    scroll_pending = true;
+                }
+            }
+
+            ImGuiListClipper clipper;
+            clipper.Begin(m_filtered_payments.size());
+            bool need_to_break = false;
+            while (clipper.Step() && !need_to_break) {
+                for (int i = clipper.DisplayStart;
+                     i < clipper.DisplayEnd && !need_to_break; ++i) {
+                    const auto &payment = m_filtered_payments[i];
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+
+                    // Find the original index in the main 'payments' vector
+                    int original_index = -1;
+                    for (size_t j = 0; j < payments.size(); ++j) {
+                        if (payments[j].id == payment.id) {
+                            original_index = j;
+                            break;
+                        }
+                    }
+
+                    bool is_selected = (selectedPaymentIndex == i);
+                    char label[128];
+                    sprintf(label, "%s##%d", payment.date.c_str(), payment.id);
+                    if (ImGui::Selectable(
+                            label, is_selected,
+                            ImGuiSelectableFlags_SpanAllColumns)) {
+                        if (selectedPaymentIndex != i) {
+                            SaveChanges();
+                            SaveDetailChanges();
+                            selectedPaymentIndex = i;
+                            selectedPayment = m_filtered_payments[i];
+                            originalPayment = m_filtered_payments[i];
+                            descriptionBuffer = selectedPayment.description;
+                            noteBuffer = selectedPayment.note;
+                            if (dbManager) {
+                                paymentDetails =
+                                    dbManager->getPaymentDetails(
+                                        selectedPayment.id);
+                            }
+                            isAdding = false;
+                            isDirty = false;
+                            selectedDetailIndex = -1;
+                            isDetailDirty = false;
+                            need_to_break = true;
+                        }
+                    }
+                    if (!need_to_break && is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                    // Прокрутка завершена — строка отрисована, сбрасываем оба флага
+                    if (!need_to_break && scroll_to_item_index >= 0 && scroll_to_item_index == i) {
+                        ImGui::SetScrollHereY(0.5f);
+                        scroll_to_item_index = -1;
+                        scroll_pending = false;
+                    }
+
+                    if (!need_to_break) {
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%s", payment.doc_number.c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%.2f", payment.amount);
+
+                        ImGui::TableNextColumn();
+                        auto cp_it = std::find_if(
+                            counterpartiesForDropdown.begin(),
+                            counterpartiesForDropdown.end(),
+                            [&](const Counterparty &cp) {
+                                return cp.id == payment.counterparty_id;
+                            });
+                        if (cp_it != counterpartiesForDropdown.end()) {
+                            ImGui::Text("%s", cp_it->name.c_str());
+                        } else {
+                            ImGui::Text("N/A");
+                        }
+
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%s", payment.description.c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%s", payment.note.c_str());
+                    }
+                }
+            }
+            ImGui::EndTable();
+        }
+        ImGui::EndChild();
+
+        CustomWidgets::HorizontalSplitter("h_splitter", &list_view_height);
+
+        // --- Редактор платежей и расшифровок ---
+        ImGui::BeginChild("Editors", ImVec2(0, 0), false);
+
+        ImGui::BeginChild("PaymentEditor", ImVec2(editor_width, 0), true);
+        if ((selectedPaymentIndex != -1 &&
+             selectedPaymentIndex < (int)payments.size()) ||
+            isAdding) {
+            if (isAdding) {
+                ImGui::Text("Добавление нового платежа");
+            } else {
+                ImGui::Text("Редактирование платежа ID: %d",
+                            selectedPayment.id);
+            }
+
+            if (CustomWidgets::InputDate("Дата", selectedPayment.date)) {
+                isDirty = true;
+            }
+
+            char docNumBuf[256];
+            snprintf(docNumBuf, sizeof(docNumBuf), "%s",
+                     selectedPayment.doc_number.c_str());
+            if (ImGui::InputText("Номер док.", docNumBuf, sizeof(docNumBuf))) {
+                selectedPayment.doc_number = docNumBuf;
+                isDirty = true;
+            }
+
+            ImGui::Text("Тип:");
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Расход", !selectedPayment.type)) {
+                selectedPayment.type = false;
+                isDirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Поступление", selectedPayment.type)) {
+                selectedPayment.type = true;
+                isDirty = true;
+            }
+
+            if (CustomWidgets::AmountInput("Сумма", selectedPayment.amount)) {
+                isDirty = true;
+            }
+
+            char recipientBuf[256];
+            snprintf(recipientBuf, sizeof(recipientBuf), "%s",
+                     selectedPayment.recipient.c_str());
+            if (ImGui::InputText("Получатель", recipientBuf,
+                                 sizeof(recipientBuf))) {
+                selectedPayment.recipient = recipientBuf;
+                isDirty = true;
+            }
+
+            if (CustomWidgets::InputTextMultilineWithWrap(
+                    "Назначение", &descriptionBuffer,
+                    ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 8))) {
+                isDirty = true;
+            }
+
+            if (CustomWidgets::InputTextMultilineWithWrap(
+                    "Примечание", &noteBuffer,
+                    ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 2))) {
+                isDirty = true;
+            }
+
+            ImGui::BeginDisabled(selectedPaymentIndex == -1);
+            if (ImGui::Button("Создать из назначения...")) {
+                show_create_from_desc_popup = true;
+                entity_to_create = 0; // Reset to contract
+                extracted_number.clear();
+                extracted_date.clear();
+                existing_entity_id = -1;
+
+                if (dbManager) {
+                    regexesForCreatePopup = dbManager->getRegexes();
+                }
+                selectedRegexIdForCreatePopup = -1;
+                selected_regex_name = "";
+                editableRegexPatternForCreate[0] = '\0';
+                regexFilterForCreatePopup[0] = '\0';
+            }
+            ImGui::EndDisabled();
+
+            if (show_create_from_desc_popup) {
+                ImGui::OpenPopup("Создать из назначения платежа");
+            }
+
+            if (ImGui::BeginPopupModal("Создать из назначения платежа",
+                                       &show_create_from_desc_popup,
+                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+
+                auto TestRegexAndExtract = [&](const char *pattern) {
+                    if (pattern[0] != '\0' && dbManager) {
+                        try {
+                            std::regex re(pattern);
+                            std::smatch match;
+                            if (std::regex_search(selectedPayment.description,
+                                                  match, re) &&
+                                match.size() > 2) {
+                                extracted_number = match[1].str();
+                                extracted_date = match[2].str();
+
+                                extracted_number.erase(
+                                    extracted_number.find_last_not_of(
+                                        " \n\r\t") +
+                                    1);
+                                extracted_number.erase(
+                                    0, extracted_number.find_first_not_of(
+                                           " \n\r\t"));
+                                extracted_date.erase(
+                                    extracted_date.find_last_not_of(" \n\r\t") +
+                                    1);
+                                extracted_date.erase(
+                                    0, extracted_date.find_first_not_of(
+                                           " \n\r\t"));
+
+                                if (entity_to_create == 0) {
+                                    existing_entity_id =
+                                        dbManager->getContractIdByNumberDate(
+                                            extracted_number, extracted_date);
+                                } else {
+                                    existing_entity_id = -1;
+                                }
+
+                            } else {
+                                extracted_number = "Не найдено";
+                                extracted_date = "Не найдено";
+                                existing_entity_id = -1;
+                            }
+                        } catch (const std::regex_error &e) {
+                            extracted_number = "Ошибка Regex";
+                            extracted_date = e.what();
+                            existing_entity_id = -1;
+                        }
+                    }
+                };
+
+                ImGui::TextWrapped("Назначение: %s",
+                                   selectedPayment.description.c_str());
+                ImGui::Separator();
+                std::vector<CustomWidgets::ComboItem> regexItems;
+                for (const auto &r : regexesForCreatePopup) {
+                    regexItems.push_back({r.id, r.name});
+                }
+
+                if (CustomWidgets::ComboWithFilter(
+                        "Выбор Regex", selectedRegexIdForCreatePopup,
+                        regexItems, regexFilterForCreatePopup,
+                        sizeof(regexFilterForCreatePopup), 0)) {
+                    auto it = std::find_if(
+                        regexesForCreatePopup.begin(),
+                        regexesForCreatePopup.end(), [&](const Regex &r) {
+                            return r.id == selectedRegexIdForCreatePopup;
+                        });
+                    if (it != regexesForCreatePopup.end()) {
+                        strncpy(editableRegexPatternForCreate,
+                                it->pattern.c_str(),
+                                sizeof(editableRegexPatternForCreate) - 1);
+                        editableRegexPatternForCreate
+                            [sizeof(editableRegexPatternForCreate) - 1] = '\0';
+                        TestRegexAndExtract(editableRegexPatternForCreate);
+                        selected_regex_name = it->name;
+                    }
+                }
+
+                if (ImGui::InputText("Шаблон Regex",
+                                     editableRegexPatternForCreate,
+                                     sizeof(editableRegexPatternForCreate))) {
+                    TestRegexAndExtract(editableRegexPatternForCreate);
+                }
+
+                if (ImGui::Button("Сохранить как новый")) {
+                    if (editableRegexPatternForCreate[0] != '\0') {
+
+                        Regex newRegex;
+                        newRegex.name = selected_regex_name;
+                        newRegex.name += "*";
+                        newRegex.pattern = editableRegexPatternForCreate;
+
+                        bool saved = dbManager->addRegex(newRegex);
+                        while (!saved) {
+                            newRegex.name += "*";
+                            if (newRegex.name.length() > 120) {
+                                saved = false; // Ensure we don't enter the
+                                               // success block
+                                break;
+                            }
+                            saved = dbManager->addRegex(newRegex);
+                        }
+
+                        if (saved) {
+                            regexesForCreatePopup = dbManager->getRegexes();
+                            selectedRegexIdForCreatePopup = newRegex.id;
+                            // show_save_regex_popup = false;
+                        }
+                        // show_save_regex_popup = true;
+                    }
+                }
+
+                ImGui::Separator();
+
+                ImGui::RadioButton("Договор", &entity_to_create, 0);
+                ImGui::Separator();
+
+                ImGui::Text("Номер и дата договора (можно редактировать):");
+                ImGui::SetNextItemWidth(200);
+                CustomWidgets::InputText("##extracted_number", &extracted_number);
+                ImGui::SetNextItemWidth(120);
+                CustomWidgets::InputText("##extracted_date", &extracted_date);
+                
+                // При ручном изменении проверяем существование договора
+                if (dbManager && !extracted_number.empty() && !extracted_date.empty() &&
+                    extracted_number != "Не найдено" && extracted_number != "Ошибка Regex") {
+                    existing_entity_id = dbManager->getContractIdByNumberDate(
+                        extracted_number, extracted_date);
+                }
+
+                if (existing_entity_id != -1) {
+                    ImGui::TextColored(
+                        ImVec4(1.0f, 1.0f, 0.0f, 1.0f),
+                        "Подсказка: Такой договор уже существует.");
+                }
+
+                if (ImGui::Button("Создать") && !extracted_number.empty() &&
+                    !extracted_date.empty() &&
+                    extracted_number != "Не найдено" &&
+                    extracted_number != "Ошибка Regex") {
+                    if (dbManager && entity_to_create == 0) {
+                        Contract new_contract = {
+                            -1, extracted_number, extracted_date,
+                            selectedPayment.counterparty_id, 0.0};
+                        dbManager->addContract(new_contract);
+                    }
+
+                    show_create_from_desc_popup = false;
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::SameLine();
+                if (ImGui::Button("Отмена")) {
+                    show_create_from_desc_popup = false;
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::EndPopup();
+            }
+
+            if (!counterpartiesForDropdown.empty()) {
+                std::vector<CustomWidgets::ComboItem> counterpartyItems;
+                for (const auto &cp : counterpartiesForDropdown) {
+                    counterpartyItems.push_back({cp.id, cp.name});
+                }
+                if (CustomWidgets::ComboWithFilter(
+                        "Контрагент", selectedPayment.counterparty_id,
+                        counterpartyItems, counterpartyFilter,
+                        sizeof(counterpartyFilter), 0)) {
+                    isDirty = true;
+                }
+            }
+        } else {
+            ImGui::Text("Выберите платеж для редактирования.");
+        }
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        CustomWidgets::VerticalSplitter("v_splitter", &editor_width);
+
+        ImGui::SameLine();
+
+        // --- Расшифровка платежа ---
+        ImGui::BeginChild("PaymentDetailsContainer", ImVec2(0, 0), true);
+        if (CustomWidgets::ConfirmationModal(
+                "Удалить расшифровку?", "Удалить расшифровку?",
+                "Вы уверены, что хотите удалить эту расшифровку?", "Да", "Нет",
+                show_delete_detail_popup)) {
+            if (dbManager && detail_id_to_delete != -1) {
+                dbManager->deletePaymentDetail(detail_id_to_delete);
+                paymentDetails =
+                    dbManager->getPaymentDetails(selectedPayment.id);
+                selectedDetailIndex = -1;
+                isDetailDirty = false;
+            }
+            detail_id_to_delete = -1;
+        }
+
+        ImGui::Text("Расшифровки: ");
+
+        if (selectedPaymentIndex != -1) {
+            double details_sum = 0.0;
+            for (const auto &detail : paymentDetails) {
+                details_sum += detail.amount;
+            }
+            ImGui::SameLine();
+            ImGui::Text("Сумма: %.2f", details_sum);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(Платеж: %.2f / Разница: %.2f)",
+                                selectedPayment.amount,
+                                selectedPayment.amount - details_sum);
+
+            if (ImGui::Button(ICON_FA_PLUS " Добавить деталь")) {
+                SaveDetailChanges();
+                // Сразу создаём расшифровку в БД с реальным ID
+                double sum_of_existing_details = 0.0;
+                for (const auto &detail : paymentDetails) {
+                    sum_of_existing_details += detail.amount;
+                }
+                double remaining_amount = selectedPayment.amount - sum_of_existing_details;
+
+                PaymentDetail newDetail{-1, selectedPayment.id, -1, -1, -1, remaining_amount};
+                if (dbManager) {
+                    dbManager->addPaymentDetail(newDetail);
+                    paymentDetails.push_back(newDetail);
+                }
+
+                selectedDetailIndex = -1;
+                for (int i = 0; i < (int)paymentDetails.size(); i++) {
+                    if (paymentDetails[i].id == newDetail.id) {
+                        selectedDetailIndex = i;
+                        break;
+                    }
+                }
+                selectedDetail = newDetail;
+                originalDetail = newDetail;
+                isAddingDetail = false;  // Уже сохранена!
+                isDetailDirty = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_FA_TRASH " Удалить деталь") &&
+                selectedDetailIndex != -1) {
+                SaveDetailChanges();
+                detail_id_to_delete = paymentDetails[selectedDetailIndex].id;
+                show_delete_detail_popup = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_FA_ROTATE_RIGHT " Обновить детали") &&
+                dbManager) {
+                SaveDetailChanges();
+                paymentDetails = dbManager->getPaymentDetails(
+                    selectedPayment.id); // Refresh details
+                selectedDetailIndex = -1;
+                isAddingDetail = false;
+                isDetailDirty = false;
+            }
+
+            ImGui::BeginChild(
+                "PaymentDetailsList",
+                ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 4), true,
+                ImGuiWindowFlags_HorizontalScrollbar);
+            if (ImGui::BeginTable("payment_details_table", 4,
+                                  ImGuiTableFlags_Borders |
+                                      ImGuiTableFlags_RowBg |
+                                      ImGuiTableFlags_Resizable)) {
+                ImGui::TableSetupColumn("Сумма");
+                ImGui::TableSetupColumn("КОСГУ");
+                ImGui::TableSetupColumn("Договор");
+                ImGui::TableSetupColumn("Накладная");
+                ImGui::TableHeadersRow();
+
+                bool need_to_break = false;
+                for (int i = 0;
+                     i < (int)paymentDetails.size() && !need_to_break; ++i) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    int detail_id = paymentDetails[i].id;
+
+                    // Find original index
+                    int original_index = -1;
+                    for (size_t j = 0; j < paymentDetails.size(); ++j) {
+                        if (paymentDetails[j].id == detail_id) {
+                            original_index = j;
+                            break;
+                        }
+                    }
+
+                    bool is_detail_selected =
+                        (selectedDetailIndex == original_index);
+                    char detail_label[128];
+                    sprintf(detail_label, "%.2f##detail_%d",
+                            paymentDetails[i].amount, paymentDetails[i].id);
+                    if (ImGui::Selectable(
+                            detail_label, is_detail_selected,
+                            ImGuiSelectableFlags_SpanAllColumns)) {
+                        if (selectedDetailIndex != original_index &&
+                            original_index != -1) {
+                            SaveDetailChanges();
+                            // Refresh payment details
+                            paymentDetails = dbManager->getPaymentDetails(
+                                selectedPayment.id);
+                            // Re-find by ID
+                            int new_index = -1;
+                            for (size_t j = 0; j < paymentDetails.size(); ++j) {
+                                if (paymentDetails[j].id == detail_id) {
+                                    new_index = j;
+                                    break;
+                                }
+                            }
+                            if (new_index != -1 &&
+                                new_index < (int)paymentDetails.size()) {
+                                selectedDetailIndex = new_index;
+                                selectedDetail = paymentDetails[new_index];
+                                originalDetail = paymentDetails[new_index];
+                                isAddingDetail = false;
+                                isDetailDirty = false;
+                            }
+                            need_to_break = true;
+                        }
+                    }
+                    if (!need_to_break && is_detail_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+
+                    if (!need_to_break) {
+                        ImGui::TableNextColumn();
+                        const char *kosguCode = "N/A";
+                        for (const auto &k : kosguForDropdown) {
+                            if (k.id == paymentDetails[i].kosgu_id) {
+                                kosguCode = k.code.c_str();
+                                break;
+                            }
+                        }
+                        ImGui::Text("%s", kosguCode);
+
+                        ImGui::TableNextColumn();
+                        const char *contractNumber = "N/A";
+                        for (const auto &c : contractsForDropdown) {
+                            if (c.id == paymentDetails[i].contract_id) {
+                                contractNumber = c.number.c_str();
+                                break;
+                            }
+                        }
+                        ImGui::Text("%s", contractNumber);
+
+                        ImGui::TableNextColumn();
+                        const char *docNumber = "N/A";
+                        for (const auto &doc : baseDocsForDropdown) {
+                            if (doc.id == paymentDetails[i].base_document_id) {
+                                docNumber = doc.number.c_str();
+                                break;
+                            }
+                        }
+                        ImGui::Text("%s", docNumber);
+                    }
+                }
+                ImGui::EndTable();
+            }
+            ImGui::EndChild();
+
+            if (isAddingDetail || selectedDetailIndex != -1) {
+                ImGui::Separator();
+                ImGui::Text(isAddingDetail ? "Добавить новую расшифровку"
+                                           : "Редактировать расшифровку ID: %d",
+                            selectedDetail.id);
+                if (CustomWidgets::AmountInput("Сумма##detail",
+                                               selectedDetail.amount)) {
+                    isDetailDirty = true;
+                }
+
+                // Dropdown for KOSGU
+                std::vector<CustomWidgets::ComboItem> kosguItems;
+                for (const auto &k : kosguForDropdown) {
+                    kosguItems.push_back({k.id, k.code});
+                }
+                if (CustomWidgets::ComboWithFilter(
+                        "КОСГУ##detail", selectedDetail.kosgu_id, kosguItems,
+                        kosguFilter, sizeof(kosguFilter), 0)) {
+                    isDetailDirty = true;
+                }
+
+                // Dropdown for Contract
+                std::vector<CustomWidgets::ComboItem> contractItems;
+                for (const auto &c : contractsForDropdown) {
+                    std::string display = c.number + "  " + c.date;
+                    contractItems.push_back({c.id, display});
+                }
+                if (CustomWidgets::ComboWithFilter(
+                        "Договор##detail", selectedDetail.contract_id,
+                        contractItems, contractFilter, sizeof(contractFilter),
+                        0)) {
+                    isDetailDirty = true;
+                }
+
+                // Dropdown for Invoice
+                std::vector<CustomWidgets::ComboItem> docItems;
+                docItems.push_back({-1, "Не выбрано"});
+                for (const auto &d : baseDocsForDropdown) {
+                    std::string display = d.number + "  " + d.date;
+                    if (!d.document_name.empty()) display += " (" + d.document_name + ")";
+                    docItems.push_back({d.id, display});
+                }
+                if (CustomWidgets::ComboWithFilter("Документ Основания##detail",
+                                                   selectedDetail.base_document_id,
+                                                   docItems, invoiceFilter,
+                                                   sizeof(invoiceFilter), 0)) {
+                    isDetailDirty = true;
+                }
+            }
+        } else {
+            ImGui::Text("Выберите платеж для просмотра расшифровок.");
+        }
+        ImGui::EndChild();
+        ImGui::EndChild();
+    }
+    ImGui::End();
+}
+
+void PaymentsView::UpdateFilteredPayments() {
+    total_filtered_amount = 0.0;
+    total_filtered_details_amount = 0.0;
+
+    std::map<int, std::vector<PaymentDetail>> details_by_payment;
+    if (dbManager) {
+        auto all_details = dbManager->getAllPaymentDetails();
+        for (const auto &detail : all_details) {
+            details_by_payment[detail.payment_id].push_back(detail);
+        }
+    }
+
+    // Create filtered list
+    std::vector<Payment> text_filtered_payments;
+    if (filterText[0] != '\0') {
+        std::string filter_str(filterText);
+        std::stringstream ss(filter_str);
+        std::string term;
+        std::vector<std::string> search_terms;
+        while (std::getline(ss, term, ',')) {
+            size_t first = term.find_first_not_of(" \t");
+            if (std::string::npos == first)
+                continue;
+            size_t last = term.find_last_not_of(" \t");
+            search_terms.push_back(term.substr(first, (last - first + 1)));
+        }
+
+        if (!search_terms.empty()) {
+            for (const auto &p : payments) {
+                bool all_terms_match = true;
+                for (const auto &current_term : search_terms) {
+                    bool term_found_in_payment = false;
+                    if (strcasestr(p.date.c_str(), current_term.c_str()) !=
+                        nullptr)
+                        term_found_in_payment = true;
+                    if (!term_found_in_payment &&
+                        strcasestr(p.doc_number.c_str(),
+                                   current_term.c_str()) != nullptr)
+                        term_found_in_payment = true;
+                    if (!term_found_in_payment &&
+                        strcasestr(p.description.c_str(),
+                                   current_term.c_str()) != nullptr)
+                        term_found_in_payment = true;
+                    if (!term_found_in_payment &&
+                        strcasestr(p.recipient.c_str(), current_term.c_str()) !=
+                            nullptr)
+                        term_found_in_payment = true;
+                    if (!term_found_in_payment &&
+                        strcasestr(p.note.c_str(), current_term.c_str()) !=
+                            nullptr)
+                        term_found_in_payment = true;
+                    if (!term_found_in_payment) {
+                        char amount_str[32];
+                        snprintf(amount_str, sizeof(amount_str), "%.2f",
+                                 p.amount);
+                        if (strcasestr(amount_str, current_term.c_str()) !=
+                            nullptr)
+                            term_found_in_payment = true;
+                    }
+
+                    if (!term_found_in_payment) {
+                        all_terms_match = false;
+                        break;
+                    }
+                }
+                if (all_terms_match) {
+                    text_filtered_payments.push_back(p);
+                }
+            }
+        } else {
+            text_filtered_payments = payments;
+        }
+    } else {
+        text_filtered_payments = payments;
+    }
+
+    // Missing info filter
+    m_filtered_payments.clear();
+    if (missing_info_filter_index == 0) {
+        m_filtered_payments = text_filtered_payments;
+    } else if (missing_info_filter_index == 5) { // "Подозрительные слова"
+        if (!suspiciousWordsForFilter.empty()) {
+            for (const auto &p : text_filtered_payments) {
+                bool suspicious_found = false;
+                for (const auto &sw : suspiciousWordsForFilter) {
+                    if (strcasestr(p.description.c_str(), sw.word.c_str()) !=
+                        nullptr) {
+                        suspicious_found = true;
+                        break;
+                    }
+                }
+                if (suspicious_found) {
+                    m_filtered_payments.push_back(p);
+                }
+            }
+        }
+    } else if (missing_info_filter_index == 6) { // "Поступления"
+        for (const auto &p : text_filtered_payments) {
+            if (p.type) { // If payment type is true (receipt)
+                m_filtered_payments.push_back(p);
+            }
+        }
+    } else if (missing_info_filter_index == 7) { // "С примечанием"
+        for (const auto &p : text_filtered_payments) {
+            if (!p.note.empty()) {
+                m_filtered_payments.push_back(p);
+            }
+        }
+    } else {
+        for (const auto &p : text_filtered_payments) {
+            auto it = details_by_payment.find(p.id);
+
+            if (missing_info_filter_index == 4) {     // "Без расшифровок"
+                if (it == details_by_payment.end()) { // has no details
+                    m_filtered_payments.push_back(p);
+                }
+            } else { // Filters for missing info inside details (index 1, 2, 3)
+                if (it != details_by_payment.end()) {     // has details
+                    if (missing_info_filter_index == 2) { // "Без Договора"
+                        bool has_detail_without_contract = false;
+                        for (const auto &detail : it->second) {
+                            if (detail.contract_id == -1) {
+                                has_detail_without_contract = true;
+                                break;
+                            }
+                        }
+
+                        if (has_detail_without_contract) {
+                            auto cp_it = std::find_if(
+                                counterpartiesForDropdown.begin(),
+                                counterpartiesForDropdown.end(),
+                                [&](const Counterparty &cp) {
+                                    return cp.id == p.counterparty_id;
+                                });
+
+                            bool contract_is_required = true;
+                            if (cp_it != counterpartiesForDropdown.end()) {
+                                if (cp_it->is_contract_optional) {
+                                    contract_is_required = false;
+                                }
+                            }
+
+                            if (contract_is_required) {
+                                m_filtered_payments.push_back(p);
+                            }
+                        }
+                    } else { // Handle other missing info filters
+                        bool missing_found = false;
+                        for (const auto &detail : it->second) {
+                            if ((missing_info_filter_index == 1 &&
+                                 detail.kosgu_id == -1) ||
+                                (missing_info_filter_index == 3 &&
+                                 detail.base_document_id == -1)) {
+                                missing_found = true;
+                                break;
+                            }
+                        }
+                        if (missing_found) {
+                            m_filtered_payments.push_back(p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Calculate totals for the final filtered list
+    for (const auto &payment : m_filtered_payments) {
+        total_filtered_amount += payment.amount;
+        auto it = details_by_payment.find(payment.id);
+        if (it != details_by_payment.end()) {
+            for (const auto &detail : it->second) {
+                total_filtered_details_amount += detail.amount;
+            }
+        }
+    }
+}
+
+void PaymentsView::ProcessGroupOperation() {
+    if (!dbManager || current_operation == NONE || items_to_process.empty()) {
+        return;
+    }
+
+    const int items_per_frame = 20;
+    int processed_in_frame = 0;
+
+    while (processed_items < items_to_process.size() &&
+           processed_in_frame < items_per_frame) {
+        const auto &payment = items_to_process[processed_items];
+
+        switch (current_operation) {
+        case ADD_KOSGU: {
+            auto details = dbManager->getPaymentDetails(payment.id);
+            double sum_of_details = 0.0;
+            for (const auto &detail : details) {
+                sum_of_details += detail.amount;
+            }
+            double remaining_amount = payment.amount - sum_of_details;
+            if (remaining_amount > 0.009 && groupKosguId != -1) {
+                PaymentDetail newDetail;
+                newDetail.payment_id = payment.id;
+                newDetail.amount = remaining_amount;
+                newDetail.kosgu_id = groupKosguId;
+                newDetail.contract_id = -1;
+                newDetail.base_document_id = -1;
+                dbManager->addPaymentDetail(newDetail);
+            }
+            break;
+        }
+        case REPLACE: {
+            std::string field_to_update;
+            int new_id = -1;
+            if (replacement_target == 0) {
+                field_to_update = "kosgu_id";
+                new_id = replacement_kosgu_id;
+            } else {
+                field_to_update = "contract_id";
+                new_id = replacement_contract_id;
+            }
+
+            if (new_id != -1) {
+                dbManager->bulkUpdatePaymentDetails({payment.id},
+                                                    field_to_update, new_id);
+            }
+            break;
+        }
+        case DELETE_DETAILS: {
+            dbManager->deleteAllPaymentDetails(payment.id);
+            break;
+        }
+        case APPLY_REGEX: {
+            auto it = std::find_if(
+                regexesForDropdown.begin(), regexesForDropdown.end(),
+                [&](const Regex &r) { return r.id == selected_regex_id; });
+            if (it != regexesForDropdown.end()) {
+                try {
+                    std::regex re(it->pattern);
+                    std::smatch match;
+                    if (std::regex_search(payment.description, match, re) &&
+                        match.size() >
+                            1) { // Changed to > 1 as KOSGU only needs 1 group
+
+                        if (regex_target == 1) { // Target is KOSGU
+                            std::string kosgu_code = match[1].str();
+                            kosgu_code.erase(
+                                kosgu_code.find_last_not_of(" \n\r\t") + 1);
+                            kosgu_code.erase(
+                                0, kosgu_code.find_first_not_of(" \n\r\t"));
+
+                            int kosgu_id =
+                                dbManager->getKosguIdByCode(kosgu_code);
+                            if (kosgu_id == -1) {
+                                Kosgu new_kosgu{-1, kosgu_code,
+                                                "КОСГУ " + kosgu_code};
+                                if (dbManager->addKosguEntry(new_kosgu)) {
+                                    kosgu_id =
+                                        dbManager->getKosguIdByCode(kosgu_code);
+                                }
+                            }
+
+                            if (kosgu_id != -1) {
+                                auto details =
+                                    dbManager->getPaymentDetails(payment.id);
+                                double total_existing_details_amount = 0.0;
+                                for (const auto &detail : details) {
+                                    total_existing_details_amount +=
+                                        detail.amount;
+                                }
+
+                                if (details.empty()) {
+                                    PaymentDetail newDetail;
+                                    newDetail.payment_id = payment.id;
+                                    newDetail.amount = payment.amount;
+                                    newDetail.kosgu_id = kosgu_id;
+                                    newDetail.contract_id = -1;
+                                    dbManager->addPaymentDetail(newDetail);
+                                } else if (total_existing_details_amount <
+                                           payment.amount) {
+                                    double amount_to_add =
+                                        payment.amount -
+                                        total_existing_details_amount;
+                                    PaymentDetail newDetail;
+                                    newDetail.payment_id = payment.id;
+                                    newDetail.amount = amount_to_add;
+                                    newDetail.kosgu_id = kosgu_id;
+                                    newDetail.contract_id = -1;
+                                    dbManager->addPaymentDetail(newDetail);
+                                } else {
+                                    bool updated_existing = false;
+                                    for (auto &detail : details) {
+                                        if (detail.kosgu_id == -1) {
+                                            detail.kosgu_id = kosgu_id;
+                                            dbManager->updatePaymentDetail(
+                                                detail);
+                                            updated_existing = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (regex_target == 0 && match.size() >
+                                   2) { // Contract, requires 2 groups (number and date)
+                            std::string number = match[1].str();
+                            std::string date = match[2].str();
+
+                            number.erase(number.find_last_not_of(" \n\r\t") +
+                                         1);
+                            number.erase(0,
+                                         number.find_first_not_of(" \n\r\t"));
+                            date.erase(date.find_last_not_of(" \n\r\t") + 1);
+                            date.erase(0, date.find_first_not_of(" \n\r\t"));
+
+                            int id_to_set = -1;
+                            id_to_set =
+                                dbManager->getContractIdByNumberDate(number,
+                                                                     date);
+                            if (id_to_set == -1) {
+                                Contract new_contract = {
+                                    -1, number, date,
+                                    payment.counterparty_id, 0.0};
+                                id_to_set =
+                                    dbManager->addContract(new_contract);
+                            }
+
+                            if (id_to_set != -1) {
+                                auto details =
+                                    dbManager->getPaymentDetails(payment.id);
+                                if (details.empty()) {
+                                    PaymentDetail newDetail;
+                                    newDetail.payment_id = payment.id;
+                                    newDetail.amount = payment.amount;
+                                    newDetail.contract_id = id_to_set;
+                                    dbManager->addPaymentDetail(newDetail);
+                                } else {
+                                    for (auto &detail : details) {
+                                        if (detail.contract_id == -1) {
+                                            detail.contract_id = id_to_set;
+                                            dbManager->updatePaymentDetail(
+                                                detail);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (const std::regex_error &e) {
+                    // Ignore regex errors in batch processing
+                }
+            }
+            break;
+        }
+        case NONE:
+            break;
+        }
+
+        processed_items++;
+        processed_in_frame++;
+    }
+
+    if (processed_items >= items_to_process.size()) {
+        // Operation finished
+        current_operation = NONE;
+        processed_items = 0;
+        items_to_process.clear();
+
+        // Refresh details of currently selected payment if any
+        if (selectedPaymentIndex != -1) {
+            paymentDetails = dbManager->getPaymentDetails(selectedPayment.id);
+        }
+    }
+}

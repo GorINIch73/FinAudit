@@ -1,0 +1,19 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Financial Audit
+Name[ru]=Финансовый Аудит
+GenericName=Financial Audit System
+GenericName[ru]=Система финансового аудита
+Comment=Automated financial operations audit system
+Comment[ru]=Система автоматизированного аудита финансовых операций
+Exec=FinancialAudit %f
+Icon=FnAudit
+TryExec=FinancialAudit
+Terminal=false
+Categories=Office;Finance;Accounting;
+Keywords=finance;audit;accounting;contracts;payments;
+Keywords[ru]=финансы;аудит;бухгалтерия;договоры;платежи;
+MimeType=application/x-sqlite3;
+StartupNotify=true
+StartupWMClass=FinancialAudit

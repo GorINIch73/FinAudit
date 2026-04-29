@@ -1,0 +1,6 @@
+*.db
+*.tsv
+*.csv
+build/
+imgui.ini
+.recent_dbs.txt
