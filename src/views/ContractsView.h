@@ -20,12 +20,12 @@ public:
     void SetUIManager(UIManager* manager) override;
     std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>> GetDataAsStrings() override;
     void OnDeactivate() override;
-    void ForceSave() override;
+    bool ForceSave() override;
 
 private:
     void RefreshData();
     void RefreshDropdownData();
-    void SaveChanges();
+    bool SaveChanges();
 
     std::vector<Contract> contracts;
     Contract selectedContract;
@@ -75,6 +75,8 @@ private:
     GroupOperationType current_operation = NONE;
     int processed_items = 0;
     std::vector<Contract> items_to_process;
+    bool group_transaction_active = false;
+    bool StartGroupOperation(GroupOperationType operation);
     bool show_group_operation_progress_popup = false;
     bool show_group_operation_confirmation_popup = false;
     std::function<void()> on_group_operation_confirm;

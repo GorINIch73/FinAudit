@@ -16,7 +16,7 @@ void SettingsView::LoadSettings() {
     }
 }
 
-void SettingsView::SaveChanges() {
+bool SettingsView::SaveChanges() {
     if (dbManager) {
         if (dbManager->updateSettings(currentSettings)) {
             std::cout << "DEBUG: Settings saved successfully." << std::endl;
@@ -24,11 +24,14 @@ void SettingsView::SaveChanges() {
             if (uiManager) {
                 uiManager->ApplyFont(currentSettings.font_size);
             }
+            isDirty = false;
+            return true;
         } else {
             std::cout << "ERROR: Failed to save settings." << std::endl;
+            return false;
         }
     }
-    isDirty = false;
+    return !isDirty;
 }
 
 void SettingsView::OnDeactivate() {
@@ -36,10 +39,11 @@ void SettingsView::OnDeactivate() {
         SaveChanges();
     }
 }
-void SettingsView::ForceSave() {
+bool SettingsView::ForceSave() {
     if (isDirty) {
-        SaveChanges();
+        return SaveChanges();
     }
+    return true;
 }
 
 void SettingsView::Render() {

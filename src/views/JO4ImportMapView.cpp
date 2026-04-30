@@ -147,6 +147,8 @@ void JO4ImportMapView::Open(const std::string& filePath) {
 void JO4ImportMapView::Reset() {
     fileHeaders.clear();
     sampleData.clear();
+    dryRunResult = JournalOrder4DryRunResult{};
+    dryRunDirty = true;
     import_started = false;
     for (const auto &field : targetFields) {
         currentMapping[field] = -1;
@@ -169,6 +171,7 @@ void JO4ImportMapView::ReadPreviewData() {
         delimiter = detectDelimiter(headerLine);
         fileHeaders = split(headerLine, delimiter);
         apply_auto_mapping(fileHeaders, currentMapping);
+        dryRunDirty = true;
     }
 
     int lines_to_read = 20;
@@ -186,6 +189,13 @@ void JO4ImportMapView::ReadPreviewData() {
 
 void JO4ImportMapView::RefreshDropdownData() {
     // Для ЖО4 не нужны дополнительные данные
+}
+
+void JO4ImportMapView::RecalculateDryRun() {
+    ImportManager importManager;
+    dryRunResult =
+        importManager.AnalyzeJournalOrder4FromTsv(importFilePath, currentMapping);
+    dryRunDirty = false;
 }
 
 void JO4ImportMapView::StartImport() {
@@ -291,6 +301,7 @@ void JO4ImportMapView::Render() {
                     bool is_selected = (currentMapping[targetField] == -1);
                     if (ImGui::Selectable("Не выбрано", is_selected)) {
                         currentMapping[targetField] = -1;
+                        dryRunDirty = true;
                     }
                     if (is_selected)
                         ImGui::SetItemDefaultFocus();
@@ -299,6 +310,7 @@ void JO4ImportMapView::Render() {
                         is_selected = (currentMapping[targetField] == i);
                         if (ImGui::Selectable(fileHeaders[i].c_str(), is_selected)) {
                             currentMapping[targetField] = i;
+                            dryRunDirty = true;
                         }
                         if (is_selected)
                             ImGui::SetItemDefaultFocus();
@@ -308,6 +320,27 @@ void JO4ImportMapView::Render() {
                 ImGui::PopID();
             }
             ImGui::EndTable();
+        }
+
+        ImGui::Separator();
+        if (dryRunDirty) {
+            RecalculateDryRun();
+        }
+        ImGui::Text("Проверка перед импортом:");
+        ImGui::Text("Строк: %d, корректных: %d, документов: %d, дублей документов: %d",
+                    dryRunResult.total_rows, dryRunResult.valid_rows,
+                    dryRunResult.document_keys,
+                    dryRunResult.duplicate_document_rows);
+        ImGui::Text("Ошибки сумм: %d, пустые номера: %d, пустые даты: %d, без КОСГУ по дебету: %d",
+                    dryRunResult.invalid_amount_rows,
+                    dryRunResult.missing_number_rows,
+                    dryRunResult.missing_date_rows,
+                    dryRunResult.missing_kosgu_rows);
+        if (!dryRunResult.sample_errors.empty()) {
+            ImGui::TextDisabled("Примеры ошибок:");
+            for (const auto &error : dryRunResult.sample_errors) {
+                ImGui::BulletText("%s", error.c_str());
+            }
         }
 
         ImGui::Separator();
@@ -355,6 +388,7 @@ void JO4ImportMapView::Render() {
             // Import button
             bool allRequiredMapped = true;
             if (currentMapping["Сумма"] == -1) allRequiredMapped = false;
+            if (dryRunResult.invalid_amount_rows > 0) allRequiredMapped = false;
 
             ImGui::BeginDisabled(!allRequiredMapped);
             if (ImGui::Button(ICON_FA_FILE_IMPORT " Начать импорт ЖО4")) {

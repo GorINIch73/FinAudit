@@ -268,19 +268,22 @@ void PaymentsView::OnDeactivate() {
     SaveChanges();
     SaveDetailChanges();
 }
-void PaymentsView::ForceSave() {
-    SaveChanges();
-    SaveDetailChanges();
+bool PaymentsView::ForceSave() {
+    bool paymentSaved = SaveChanges();
+    bool detailSaved = SaveDetailChanges();
+    return paymentSaved && detailSaved;
 }
 
-void PaymentsView::SaveChanges() {
+bool PaymentsView::SaveChanges() {
     if (!isDirty)
-        return;
+        return true;
 
     if (dbManager && selectedPayment.id != -1) {
         selectedPayment.description = descriptionBuffer;
         selectedPayment.note = noteBuffer;
-        dbManager->updatePayment(selectedPayment);
+        if (!dbManager->updatePayment(selectedPayment)) {
+            return false;
+        }
 
         // Обновляем из БД и применяем сортировку
         payments = dbManager->getPayments();
@@ -298,16 +301,21 @@ void PaymentsView::SaveChanges() {
         originalPayment = selectedPayment;
         descriptionBuffer = selectedPayment.description;
         noteBuffer = selectedPayment.note;
+    } else {
+        return false;
     }
     isDirty = false;
+    return true;
 }
 
-void PaymentsView::SaveDetailChanges() {
+bool PaymentsView::SaveDetailChanges() {
     if (!isDetailDirty)
-        return;
+        return true;
 
     if (dbManager && selectedPayment.id != -1 && selectedDetail.id != -1) {
-        dbManager->updatePaymentDetail(selectedDetail);
+        if (!dbManager->updatePaymentDetail(selectedDetail)) {
+            return false;
+        }
 
         auto it = std::find_if(
             paymentDetails.begin(), paymentDetails.end(),
@@ -315,9 +323,12 @@ void PaymentsView::SaveDetailChanges() {
         if (it != paymentDetails.end()) {
             *it = selectedDetail;
         }
+    } else {
+        return false;
     }
 
     isDetailDirty = false;
+    return true;
 }
 
 void PaymentsView::SortPayments(const ImGuiTableSortSpecs *sort_specs) {
@@ -619,9 +630,7 @@ void PaymentsView::Render() {
                 "Удалить все расшифровки?", "Удалить все расшифровки?",
                 group_delete_message, "Да", "Нет", show_group_delete_popup)) {
             if (!m_filtered_payments.empty() && current_operation == NONE) {
-                items_to_process = m_filtered_payments;
-                processed_items = 0;
-                current_operation = DELETE_DETAILS;
+                StartGroupOperation(DELETE_DETAILS);
             }
         }
 
@@ -736,9 +745,7 @@ void PaymentsView::Render() {
             if (ImGui::Button("Найти и проставить", ImVec2(120, 0))) {
                 if (dbManager && selected_regex_id != -1 &&
                     !m_filtered_payments.empty() && current_operation == NONE) {
-                    items_to_process = m_filtered_payments;
-                    processed_items = 0;
-                    current_operation = APPLY_REGEX;
+                    StartGroupOperation(APPLY_REGEX);
                 }
                 show_apply_regex_popup = false;
                 ImGui::CloseCurrentPopup();
@@ -772,9 +779,7 @@ void PaymentsView::Render() {
             if (ImGui::Button("ОК", ImVec2(120, 0))) {
                 if (dbManager && groupKosguId != -1 &&
                     !m_filtered_payments.empty() && current_operation == NONE) {
-                    items_to_process = m_filtered_payments;
-                    processed_items = 0;
-                    current_operation = ADD_KOSGU;
+                    StartGroupOperation(ADD_KOSGU);
                 }
                 show_add_kosgu_popup = false;
                 ImGui::CloseCurrentPopup();
@@ -841,9 +846,7 @@ void PaymentsView::Render() {
                         new_id = replacement_base_document_id;
 
                     if (new_id != -1) {
-                        items_to_process = m_filtered_payments;
-                        processed_items = 0;
-                        current_operation = REPLACE;
+                        StartGroupOperation(REPLACE);
                     }
                 }
                 show_replace_popup = false;
@@ -1695,6 +1698,16 @@ void PaymentsView::InvalidateJo4Cache() {
     cachedJo4Details.clear();
 }
 
+bool PaymentsView::IsSelectedPaymentContractOptional() const {
+    auto cp_it = std::find_if(counterpartiesForDropdown.begin(),
+                              counterpartiesForDropdown.end(),
+                              [&](const Counterparty &cp) {
+                                  return cp.id == selectedPayment.counterparty_id;
+                              });
+    return cp_it != counterpartiesForDropdown.end() &&
+           cp_it->is_contract_optional;
+}
+
 void PaymentsView::RebuildJo4Cache() {
     if (!dbManager || selectedPayment.id <= 0) {
         InvalidateJo4Cache();
@@ -1712,6 +1725,10 @@ void PaymentsView::RebuildJo4Cache() {
     cachedJo4ReferencedCandidates.clear();
     cachedJo4RefsPreview.clear();
     cachedJo4RefsCount = 0;
+
+    if (IsSelectedPaymentContractOptional()) {
+        return;
+    }
 
     std::set<int> linked_doc_ids;
     for (const auto &link : cachedJo4Links) {
@@ -1875,13 +1892,14 @@ void PaymentsView::RenderJo4DocumentsPanel() {
         return it == baseDocsForDropdown.end() ? nullptr : &(*it);
     };
 
-    if (ImGui::BeginTable("linked_jo4_docs_table", 6,
+    if (ImGui::BeginTable("linked_jo4_docs_table", 7,
                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                               ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Сумма");
         ImGui::TableSetupColumn("Дата");
         ImGui::TableSetupColumn("Номер");
         ImGui::TableSetupColumn("Документ");
-        ImGui::TableSetupColumn("Сумма");
+        ImGui::TableSetupColumn("Контрагент ЖО4", ImGuiTableColumnFlags_WidthFixed, 260.0f);
         ImGui::TableSetupColumn("Статус");
         ImGui::TableSetupColumn("Причина");
         ImGui::TableHeadersRow();
@@ -1897,6 +1915,8 @@ void PaymentsView::RenderJo4DocumentsPanel() {
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
+            ImGui::Text("%.2f", doc->total_amount);
+            ImGui::TableNextColumn();
             char label[128];
             snprintf(label, sizeof(label), "%s##linked_jo4_%d",
                      doc->date.c_str(), doc->id);
@@ -1909,7 +1929,7 @@ void PaymentsView::RenderJo4DocumentsPanel() {
             ImGui::TableNextColumn();
             ImGui::Text("%s", doc->document_name.c_str());
             ImGui::TableNextColumn();
-            ImGui::Text("%.2f", doc->total_amount);
+            ImGui::Text("%s", doc->counterparty_name.c_str());
             ImGui::TableNextColumn();
             ImGui::Text("%s", link.match_status.c_str());
             ImGui::TableNextColumn();
@@ -1972,6 +1992,12 @@ void PaymentsView::RenderJo4DocumentsPanel() {
         ImGui::TextDisabled("%s", cachedJo4RefsPreview.c_str());
     }
 
+    if (IsSelectedPaymentContractOptional()) {
+        ImGui::TextDisabled(
+            "Кандидаты ЖО4 не подбираются: у контрагента отмечен необязательный договор.");
+        return;
+    }
+
     if (cachedJo4ReferencedCandidates.size() > 1) {
         double group_sum = 0.0;
         for (const auto &candidate : cachedJo4ReferencedCandidates) {
@@ -1994,13 +2020,13 @@ void PaymentsView::RenderJo4DocumentsPanel() {
                               ImGuiTableFlags_Resizable |
                               ImGuiTableFlags_ScrollX)) {
         ImGui::TableSetupColumn("Балл");
-        ImGui::TableSetupColumn("Совп.");
+        ImGui::TableSetupColumn("Сумма");
         ImGui::TableSetupColumn("Дата");
         ImGui::TableSetupColumn("Номер");
         ImGui::TableSetupColumn("Документ");
         ImGui::TableSetupColumn("Контрагент ЖО4", ImGuiTableColumnFlags_WidthFixed, 260.0f);
-        ImGui::TableSetupColumn("Сумма");
         ImGui::TableSetupColumn("Причина", ImGuiTableColumnFlags_WidthFixed, 260.0f);
+        ImGui::TableSetupColumn("Совп.");
         ImGui::TableHeadersRow();
 
         int shown = 0;
@@ -2032,14 +2058,7 @@ void PaymentsView::RenderJo4DocumentsPanel() {
             ImGui::TableNextColumn();
             ImGui::Text("%d", candidate.score);
             ImGui::TableNextColumn();
-            std::string match_flags = "Сумма";
-            if (candidate.number_strong_match) {
-                match_flags += ", Номер";
-            }
-            if (candidate.date_strong_match) {
-                match_flags += ", Дата";
-            }
-            ImGui::Text("%s", match_flags.c_str());
+            ImGui::Text("%.2f", doc->total_amount);
             ImGui::TableNextColumn();
             ImGui::Text("%s", doc->date.c_str());
             ImGui::TableNextColumn();
@@ -2055,17 +2074,57 @@ void PaymentsView::RenderJo4DocumentsPanel() {
             ImGui::TableNextColumn();
             ImGui::Text("%s", doc->counterparty_name.c_str());
             ImGui::TableNextColumn();
-            ImGui::Text("%.2f", doc->total_amount);
-            ImGui::TableNextColumn();
             ImGui::Text("%s", candidate.reason.c_str());
+            ImGui::TableNextColumn();
+            std::string match_flags = "Сумма";
+            if (candidate.number_strong_match) {
+                match_flags += ", Номер";
+            }
+            if (candidate.date_strong_match) {
+                match_flags += ", Дата";
+            }
+            ImGui::Text("%s", match_flags.c_str());
         }
         ImGui::EndTable();
     }
 }
 
+bool PaymentsView::StartGroupOperation(GroupOperationType operation) {
+    if (!dbManager || current_operation != NONE || m_filtered_payments.empty()) {
+        return false;
+    }
+
+    if (uiManager) {
+        std::string backupPath;
+        if (!uiManager->BackupCurrentDatabase("group_payments", backupPath)) {
+            return false;
+        }
+    }
+
+    items_to_process = m_filtered_payments;
+    processed_items = 0;
+    group_transaction_active = false;
+    current_operation = operation;
+    return true;
+}
+
 void PaymentsView::ProcessGroupOperation() {
     if (!dbManager || current_operation == NONE || items_to_process.empty()) {
+        if (group_transaction_active && dbManager) {
+            dbManager->rollbackTransaction();
+            group_transaction_active = false;
+        }
         return;
+    }
+
+    if (!group_transaction_active && processed_items == 0) {
+        if (!dbManager->beginTransaction()) {
+            current_operation = NONE;
+            processed_items = 0;
+            items_to_process.clear();
+            return;
+        }
+        group_transaction_active = true;
     }
 
     const int items_per_frame = 20;
@@ -2246,6 +2305,13 @@ void PaymentsView::ProcessGroupOperation() {
     }
 
     if (processed_items >= items_to_process.size()) {
+        if (group_transaction_active) {
+            if (!dbManager->commitTransaction()) {
+                dbManager->rollbackTransaction();
+            }
+            group_transaction_active = false;
+        }
+
         // Operation finished
         current_operation = NONE;
         processed_items = 0;

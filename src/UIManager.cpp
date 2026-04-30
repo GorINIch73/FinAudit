@@ -161,7 +161,9 @@ void UIManager::SetExportManager(ExportManager *manager) {
 void UIManager::SetWindow(GLFWwindow *w) { window = w; }
 
 bool UIManager::LoadDatabase(const std::string &path) {
-    SaveAllViews();
+    if (!SaveAllViews()) {
+        return false;
+    }
 
     if (dbManager->open(path)) {
         currentDbPath = path;
@@ -175,6 +177,7 @@ bool UIManager::LoadDatabase(const std::string &path) {
 
         return true;
     }
+    ShowError("Не удалось открыть базу данных: " + path);
     return false;
 }
 
@@ -200,10 +203,26 @@ void UIManager::ShowContractRegistryNumbersView() {
     CreateView<ContractRegistryNumbersView>();
 }
 
-void UIManager::SaveAllViews() {
+bool UIManager::SaveAllViews() {
+    bool allSaved = true;
+    std::string failedViews;
     for (const auto& view : allViews) {
-        view->ForceSave();
+        if (!view->ForceSave()) {
+            std::cerr << "Failed to save view before operation: "
+                      << view->GetTitle() << std::endl;
+            if (!failedViews.empty()) {
+                failedViews += ", ";
+            }
+            failedViews += view->GetTitle();
+            allSaved = false;
+        }
     }
+    if (!allSaved) {
+        ShowError("Не удалось сохранить изменения перед операцией. "
+                  "Операция отменена, чтобы не потерять данные.\nФормы: " +
+                  failedViews);
+    }
+    return allSaved;
 }
 
 bool UIManager::BackupCurrentDatabase(const std::string& reason,
@@ -212,7 +231,10 @@ bool UIManager::BackupCurrentDatabase(const std::string& reason,
         return false;
     }
 
-    SaveAllViews();
+    if (!SaveAllViews()) {
+        std::cerr << "Backup aborted: not all views were saved." << std::endl;
+        return false;
+    }
 
     std::string safeReason;
     safeReason.reserve(reason.size());
@@ -247,6 +269,11 @@ bool UIManager::BackupCurrentDatabase(const std::string& reason,
 
     backupPath = backup.string();
     return dbManager->backupTo(backupPath);
+}
+
+void UIManager::ShowError(const std::string& message) {
+    lastErrorMessage = message;
+    showErrorPopup = true;
 }
 
 SpecialQueryView *UIManager::CreateSpecialQueryView(const std::string &title,
@@ -316,6 +343,8 @@ void UIManager::HandleFileDialogs() {
             if (dbManager->createDatabase(filePathName)) {
                 // Also treat creation as loading
                 LoadDatabase(filePathName);
+            } else {
+                ShowError("Не удалось создать базу данных: " + filePathName);
             }
         }
         ImGuiFileDialog::Instance()->Close();
@@ -336,14 +365,19 @@ void UIManager::HandleFileDialogs() {
                 ImGuiFileDialog::Instance()->GetFilePathName();
             if (!currentDbPath.empty() && newFilePath != currentDbPath) {
                 try {
-                    dbManager->backupTo(newFilePath);
-                    currentDbPath = newFilePath;
-                    AddRecentDbPath(newFilePath);
-                    SetWindowTitle(currentDbPath);
+                    if (dbManager->backupTo(newFilePath)) {
+                        currentDbPath = newFilePath;
+                        AddRecentDbPath(newFilePath);
+                        SetWindowTitle(currentDbPath);
+                    } else {
+                        ShowError("Не удалось сохранить копию базы данных: " +
+                                  newFilePath);
+                    }
                 } catch (const std::filesystem::filesystem_error &e) {
-                    // TODO: Show error message to user
                     std::cerr << "Error saving database: " << e.what()
                               << std::endl;
+                    ShowError("Ошибка сохранения базы данных: " +
+                              std::string(e.what()));
                 }
             }
         }
@@ -357,7 +391,7 @@ void UIManager::HandleFileDialogs() {
             if (dbManager->is_open()) {
                 CreateView<ImportMapView>()->Open(filePathName);
             } else {
-                // TODO: Show error message that a database must be open first.
+                ShowError("Перед импортом нужно открыть или создать базу данных.");
             }
         }
         ImGuiFileDialog::Instance()->Close();
@@ -512,6 +546,22 @@ void UIManager::Render() {
         }
 
         if (!isImporting) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (showErrorPopup) {
+        ImGui::OpenPopup("Ошибка операции");
+        showErrorPopup = false;
+    }
+
+    if (ImGui::BeginPopupModal("Ошибка операции", NULL,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("%s", lastErrorMessage.c_str());
+        ImGui::Separator();
+        if (ImGui::Button("OK", ImVec2(120, 0))) {
+            lastErrorMessage.clear();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();

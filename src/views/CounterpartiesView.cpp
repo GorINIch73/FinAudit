@@ -65,9 +65,9 @@ CounterpartiesView::GetDataAsStrings() {
 }
 
 void CounterpartiesView::OnDeactivate() { SaveChanges(); }
-void CounterpartiesView::ForceSave() { SaveChanges(); }
+bool CounterpartiesView::ForceSave() { return SaveChanges(); }
 
-void CounterpartiesView::SaveChanges() {
+bool CounterpartiesView::SaveChanges() {
     // Сравниваем поля редактора с оригиналом
     bool hasChanges = (selectedCounterparty.id != -1) && (
         selectedCounterparty.name != originalCounterparty.name ||
@@ -76,11 +76,13 @@ void CounterpartiesView::SaveChanges() {
     );
 
     if (!hasChanges) {
-        return;
+        return true;
     }
 
     if (dbManager && selectedCounterparty.id != -1) {
-        dbManager->updateCounterparty(selectedCounterparty);
+        if (!dbManager->updateCounterparty(selectedCounterparty)) {
+            return false;
+        }
         // Обновляем из БД и применяем сортировку
         counterparties = dbManager->getCounterparties();
         m_filtered_counterparties = counterparties;
@@ -94,9 +96,12 @@ void CounterpartiesView::SaveChanges() {
             }
         }
         originalCounterparty = selectedCounterparty;
+    } else {
+        return false;
     }
 
     isDirty = false;
+    return true;
 }
 
 // Вспомогательная функция для сортировки

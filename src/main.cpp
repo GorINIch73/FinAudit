@@ -118,23 +118,25 @@ int main(int, char **) {
                 if (ImGui::MenuItem(ICON_FA_FILE_CIRCLE_PLUS
                                     " Создать новую базу")) {
 
-                    uiManager.SaveAllViews();
-                    ImGuiFileDialog::Instance()->OpenDialog(
-                        "ChooseDbFileDlgKey", "Выберите файл для новой базы",
-                        ".db");
+                    if (uiManager.SaveAllViews()) {
+                        ImGuiFileDialog::Instance()->OpenDialog(
+                            "ChooseDbFileDlgKey", "Выберите файл для новой базы",
+                            ".db");
+                    }
                 }
                 if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN
                                     " Открыть базу данных")) {
 
-                    uiManager.SaveAllViews();
-                    ImGuiFileDialog::Instance()->OpenDialog(
-                        "OpenDbFileDlgKey", "Выберите файл базы данных", ".db");
+                    if (uiManager.SaveAllViews()) {
+                        ImGuiFileDialog::Instance()->OpenDialog(
+                            "OpenDbFileDlgKey", "Выберите файл базы данных", ".db");
+                    }
                 }
                 if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK
                                     " Сохранить базу как...")) {
 
-                    uiManager.SaveAllViews();
-                    if (!uiManager.currentDbPath.empty()) {
+                    if (uiManager.SaveAllViews() &&
+                        !uiManager.currentDbPath.empty()) {
                         IGFD::FileDialogConfig config;
                         config.filePathName = uiManager.currentDbPath;
                         ImGuiFileDialog::Instance()->OpenDialog(
@@ -145,8 +147,9 @@ int main(int, char **) {
                 ImGui::Separator();
                 if (ImGui::MenuItem(ICON_FA_ARROW_RIGHT_FROM_BRACKET
                                     " Выход")) {
-                    uiManager.SaveAllViews();
-                    glfwSetWindowShouldClose(window, true);
+                    if (uiManager.SaveAllViews()) {
+                        glfwSetWindowShouldClose(window, true);
+                    }
                 }
                 ImGui::Separator();
                 if (ImGui::BeginMenu(ICON_FA_CLOCK_ROTATE_LEFT
@@ -154,7 +157,6 @@ int main(int, char **) {
                     for (const auto &path : uiManager.recentDbPaths) {
                         if (ImGui::MenuItem(path.c_str())) {
 
-                            uiManager.SaveAllViews();
                             uiManager.LoadDatabase(path);
                         }
                     }
@@ -397,7 +399,7 @@ FROM Payments p
 JOIN PaymentDetails pd ON pd.payment_id = p.id
 LEFT JOIN Counterparties c ON c.id = p.counterparty_id
 WHERE p.type = 0
-  AND pd.invoice_id IS NULL
+  AND pd.base_document_id IS NULL
 
 UNION ALL
 SELECT

@@ -15,11 +15,11 @@ public:
     void SetUIManager(UIManager* manager) override;
     std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>> GetDataAsStrings() override;
     void OnDeactivate() override;
-    void ForceSave() override;
+    bool ForceSave() override;
 
 private:
     void RefreshData();
-    void SaveChanges();
+    bool SaveChanges();
 
     std::vector<Kosgu> kosguEntries;
     Kosgu selectedKosgu;

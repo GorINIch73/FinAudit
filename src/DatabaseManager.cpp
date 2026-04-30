@@ -19,6 +19,39 @@ static void bind_optional_id(sqlite3_stmt *stmt, int index, int id) {
     }
 }
 
+static bool sqlite_scalar_int(sqlite3 *db, const std::string &sql,
+                              int &value) {
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    bool ok = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        value = sqlite3_column_int(stmt, 0);
+        ok = true;
+    }
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+static bool sqlite_scalar_text(sqlite3 *db, const std::string &sql,
+                               std::string &value) {
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    bool ok = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *text = sqlite3_column_text(stmt, 0);
+        value = text ? reinterpret_cast<const char *>(text) : "";
+        ok = true;
+    }
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
 static bool sqlite_table_exists(sqlite3 *db, const std::string &table_name) {
     std::string sql =
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?;";
@@ -28,6 +61,27 @@ static bool sqlite_table_exists(sqlite3 *db, const std::string &table_name) {
     }
     sqlite3_bind_text(stmt, 1, table_name.c_str(), -1, SQLITE_TRANSIENT);
     bool exists = sqlite3_step(stmt) == SQLITE_ROW;
+    sqlite3_finalize(stmt);
+    return exists;
+}
+
+static bool sqlite_column_exists(sqlite3 *db, const std::string &table_name,
+                                 const std::string &column_name) {
+    std::string sql = "PRAGMA table_info(" + table_name + ");";
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    bool exists = false;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *name = sqlite3_column_text(stmt, 1);
+        if (name &&
+            std::string(reinterpret_cast<const char *>(name)) == column_name) {
+            exists = true;
+            break;
+        }
+    }
     sqlite3_finalize(stmt);
     return exists;
 }
@@ -83,6 +137,7 @@ bool DatabaseManager::configureConnection() {
     sqlite3_busy_timeout(db, 5000);
 
     std::vector<std::string> pragmas = {
+        "PRAGMA busy_timeout = 5000;",
         "PRAGMA foreign_keys = ON;",
         "PRAGMA journal_mode = WAL;",
         "PRAGMA synchronous = NORMAL;",
@@ -94,6 +149,36 @@ bool DatabaseManager::configureConnection() {
                       << std::endl;
             return false;
         }
+    }
+
+    int foreign_keys = 0;
+    if (!sqlite_scalar_int(db, "PRAGMA foreign_keys;", foreign_keys) ||
+        foreign_keys != 1) {
+        std::cerr << "SQLite foreign key enforcement is not enabled."
+                  << std::endl;
+        return false;
+    }
+
+    int busy_timeout = 0;
+    if (!sqlite_scalar_int(db, "PRAGMA busy_timeout;", busy_timeout) ||
+        busy_timeout < 5000) {
+        std::cerr << "SQLite busy_timeout was not applied." << std::endl;
+        return false;
+    }
+
+    int synchronous = 0;
+    if (!sqlite_scalar_int(db, "PRAGMA synchronous;", synchronous) ||
+        synchronous < 1) {
+        std::cerr << "SQLite synchronous mode is weaker than NORMAL."
+                  << std::endl;
+        return false;
+    }
+
+    std::string journal_mode;
+    if (sqlite_scalar_text(db, "PRAGMA journal_mode;", journal_mode) &&
+        journal_mode != "wal") {
+        std::cerr << "SQLite journal_mode is '" << journal_mode
+                  << "', expected WAL where supported." << std::endl;
     }
 
     return true;
@@ -112,46 +197,258 @@ void DatabaseManager::checkAndUpdateDatabaseSchema() {
 
     execute("INSERT OR IGNORE INTO SchemaVersion (id, version) VALUES (1, 1);");
 
+    execute("CREATE TABLE IF NOT EXISTS KOSGU ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "code TEXT NOT NULL UNIQUE,"
+            "name TEXT NOT NULL,"
+            "note TEXT);");
+
+    execute("CREATE TABLE IF NOT EXISTS Counterparties ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "name TEXT NOT NULL,"
+            "inn TEXT UNIQUE,"
+            "is_contract_optional INTEGER DEFAULT 0);");
+
+    execute("CREATE TABLE IF NOT EXISTS Contracts ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "number TEXT NOT NULL,"
+            "date TEXT NOT NULL,"
+            "counterparty_id INTEGER,"
+            "contract_amount REAL DEFAULT 0.0,"
+            "end_date TEXT,"
+            "procurement_code TEXT,"
+            "note TEXT,"
+            "is_for_checking INTEGER DEFAULT 0,"
+            "is_for_special_control INTEGER DEFAULT 0,"
+            "is_found INTEGER DEFAULT 0,"
+            "FOREIGN KEY(counterparty_id) REFERENCES Counterparties(id));");
+
+    execute("CREATE TABLE IF NOT EXISTS Payments ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "date TEXT NOT NULL,"
+            "doc_number TEXT,"
+            "type INTEGER NOT NULL DEFAULT 0,"
+            "amount REAL NOT NULL,"
+            "recipient TEXT,"
+            "description TEXT,"
+            "counterparty_id INTEGER,"
+            "note TEXT,"
+            "FOREIGN KEY(counterparty_id) REFERENCES Counterparties(id));");
+
+    execute("CREATE TABLE IF NOT EXISTS BasePaymentDocuments ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "date TEXT NOT NULL,"
+            "number TEXT NOT NULL,"
+            "document_name TEXT,"
+            "counterparty_name TEXT,"
+            "contract_id INTEGER,"
+            "payment_id INTEGER,"
+            "note TEXT,"
+            "is_for_checking INTEGER DEFAULT 0,"
+            "is_checked INTEGER DEFAULT 0,"
+            "FOREIGN KEY(contract_id) REFERENCES Contracts(id),"
+            "FOREIGN KEY(payment_id) REFERENCES Payments(id));");
+
+    execute("CREATE TABLE IF NOT EXISTS PaymentDetails ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "payment_id INTEGER NOT NULL,"
+            "kosgu_id INTEGER,"
+            "contract_id INTEGER,"
+            "base_document_id INTEGER,"
+            "amount REAL NOT NULL,"
+            "FOREIGN KEY(payment_id) REFERENCES Payments(id) ON DELETE CASCADE,"
+            "FOREIGN KEY(kosgu_id) REFERENCES KOSGU(id),"
+            "FOREIGN KEY(contract_id) REFERENCES Contracts(id),"
+            "FOREIGN KEY(base_document_id) REFERENCES BasePaymentDocuments(id));");
+
+    execute("CREATE TABLE IF NOT EXISTS Settings ("
+            "id INTEGER PRIMARY KEY,"
+            "organization_name TEXT,"
+            "period_start_date TEXT,"
+            "period_end_date TEXT,"
+            "note TEXT,"
+            "import_preview_lines INTEGER DEFAULT 20,"
+            "theme INTEGER DEFAULT 0,"
+            "font_size INTEGER DEFAULT 24,"
+            "zakupki_url_template TEXT,"
+            "zakupki_url_search_template TEXT"
+            ");");
+    execute("INSERT OR IGNORE INTO Settings (id, organization_name, "
+            "period_start_date, period_end_date, note, import_preview_lines, "
+            "theme, font_size, zakupki_url_template, "
+            "zakupki_url_search_template) "
+            "VALUES (1, '', '', '', '', 20, 0, 24, "
+            "'https://zakupki.gov.ru/epz/contract/contractCard/"
+            "common-info.html?reestrNumber={IKZ}', "
+            "'https://zakupki.gov.ru/epz/contract/search/"
+            "results.html?searchString={NUMBER}');");
+
+    execute("CREATE TABLE IF NOT EXISTS Regexes ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "name TEXT NOT NULL UNIQUE,"
+            "pattern TEXT NOT NULL);");
+    execute("INSERT OR IGNORE INTO Regexes (name, pattern) VALUES "
+            "('Контракты', '(?:по контракту|по контр|Контракт|дог\\.|К-т)(?: "
+            "№)?\\s*([^\\s,]+)\\s*(?:от\\s*)?(\\d{2}\\.\\d{2}\\.(?:\\d{4}|\\d{2}))');");
+    execute("INSERT OR IGNORE INTO Regexes (name, pattern) VALUES "
+            "('КОСГУ', 'К(\\d{3})');");
+
+    execute("CREATE TABLE IF NOT EXISTS SuspiciousWords ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "word TEXT NOT NULL UNIQUE);");
+
+    execute("CREATE TABLE IF NOT EXISTS BasePaymentDocumentDetails ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "document_id INTEGER NOT NULL,"
+            "operation_content TEXT,"
+            "debit_account TEXT,"
+            "credit_account TEXT,"
+            "kosgu_id INTEGER,"
+            "amount REAL NOT NULL,"
+            "note TEXT,"
+            "FOREIGN KEY(document_id) REFERENCES BasePaymentDocuments(id) ON DELETE CASCADE,"
+            "FOREIGN KEY(kosgu_id) REFERENCES KOSGU(id));");
+
+    auto add_column_if_missing = [&](const std::string &table,
+                                     const std::string &column,
+                                     const std::string &definition) {
+        if (sqlite_table_exists(db, table) &&
+            !sqlite_column_exists(db, table, column)) {
+            return execute("ALTER TABLE " + table + " ADD COLUMN " +
+                           definition + ";");
+        }
+        return true;
+    };
+
+    add_column_if_missing("Counterparties", "is_contract_optional",
+                          "is_contract_optional INTEGER DEFAULT 0");
+
+    add_column_if_missing("Contracts", "contract_amount",
+                          "contract_amount REAL DEFAULT 0.0");
+    add_column_if_missing("Contracts", "end_date", "end_date TEXT");
+    add_column_if_missing("Contracts", "procurement_code",
+                          "procurement_code TEXT");
+    add_column_if_missing("Contracts", "note", "note TEXT");
+    add_column_if_missing("Contracts", "is_for_checking",
+                          "is_for_checking INTEGER DEFAULT 0");
+    add_column_if_missing("Contracts", "is_for_special_control",
+                          "is_for_special_control INTEGER DEFAULT 0");
+    add_column_if_missing("Contracts", "is_found",
+                          "is_found INTEGER DEFAULT 0");
+
+    add_column_if_missing("Payments", "type",
+                          "type INTEGER NOT NULL DEFAULT 0");
+    add_column_if_missing("Payments", "recipient", "recipient TEXT");
+    add_column_if_missing("Payments", "note", "note TEXT");
+
+    add_column_if_missing("BasePaymentDocuments", "document_name",
+                          "document_name TEXT");
+    add_column_if_missing("BasePaymentDocuments", "counterparty_name",
+                          "counterparty_name TEXT");
+    add_column_if_missing("BasePaymentDocuments", "contract_id",
+                          "contract_id INTEGER");
+    add_column_if_missing("BasePaymentDocuments", "payment_id",
+                          "payment_id INTEGER");
+    add_column_if_missing("BasePaymentDocuments", "note", "note TEXT");
+    add_column_if_missing("BasePaymentDocuments", "is_for_checking",
+                          "is_for_checking INTEGER DEFAULT 0");
+    add_column_if_missing("BasePaymentDocuments", "is_checked",
+                          "is_checked INTEGER DEFAULT 0");
+
+    add_column_if_missing("BasePaymentDocumentDetails", "note", "note TEXT");
+
+    add_column_if_missing("Settings", "import_preview_lines",
+                          "import_preview_lines INTEGER DEFAULT 20");
+    add_column_if_missing("Settings", "theme", "theme INTEGER DEFAULT 0");
+    add_column_if_missing("Settings", "font_size",
+                          "font_size INTEGER DEFAULT 24");
+    add_column_if_missing("Settings", "zakupki_url_template",
+                          "zakupki_url_template TEXT");
+    add_column_if_missing("Settings", "zakupki_url_search_template",
+                          "zakupki_url_search_template TEXT");
+
     if (sqlite_table_exists(db, "PaymentDetails") &&
         payment_details_references_invoices(db)) {
         execute("PRAGMA foreign_keys = OFF;");
 
-        bool migrated = execute("BEGIN IMMEDIATE TRANSACTION;") &&
-                        execute("ALTER TABLE PaymentDetails RENAME TO "
-                                "PaymentDetails_old_invoice;") &&
-                        execute("CREATE TABLE PaymentDetails ("
-                                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                                "payment_id INTEGER NOT NULL,"
-                                "kosgu_id INTEGER,"
-                                "contract_id INTEGER,"
-                                "invoice_id INTEGER,"
-                                "amount REAL NOT NULL,"
-                                "FOREIGN KEY(payment_id) REFERENCES "
-                                "Payments(id) ON DELETE CASCADE,"
-                                "FOREIGN KEY(kosgu_id) REFERENCES KOSGU(id),"
-                                "FOREIGN KEY(contract_id) REFERENCES "
-                                "Contracts(id),"
-                                "FOREIGN KEY(invoice_id) REFERENCES "
-                                "BasePaymentDocuments(id));") &&
-                        execute("INSERT INTO PaymentDetails "
-                                "(id, payment_id, kosgu_id, contract_id, "
-                                "invoice_id, amount) "
-                                "SELECT id, payment_id, NULLIF(kosgu_id, -1), "
-                                "NULLIF(contract_id, -1), "
-                                "NULLIF(invoice_id, -1), amount "
-                                "FROM PaymentDetails_old_invoice;") &&
-                        execute("DROP TABLE PaymentDetails_old_invoice;") &&
-                        execute("COMMIT;");
+        TransactionGuard transaction(*this);
+        bool migrated =
+            transaction.started() &&
+            execute("ALTER TABLE PaymentDetails RENAME TO "
+                    "PaymentDetails_old_invoice;") &&
+            execute("CREATE TABLE PaymentDetails ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "payment_id INTEGER NOT NULL,"
+                    "kosgu_id INTEGER,"
+                    "contract_id INTEGER,"
+                    "base_document_id INTEGER,"
+                    "amount REAL NOT NULL,"
+                    "FOREIGN KEY(payment_id) REFERENCES "
+                    "Payments(id) ON DELETE CASCADE,"
+                    "FOREIGN KEY(kosgu_id) REFERENCES KOSGU(id),"
+                    "FOREIGN KEY(contract_id) REFERENCES "
+                    "Contracts(id),"
+                    "FOREIGN KEY(base_document_id) REFERENCES "
+                    "BasePaymentDocuments(id));") &&
+            execute("INSERT INTO PaymentDetails "
+                    "(id, payment_id, kosgu_id, contract_id, "
+                    "base_document_id, amount) "
+                    "SELECT id, payment_id, NULLIF(kosgu_id, -1), "
+                    "NULLIF(contract_id, -1), "
+                    "NULLIF(invoice_id, -1), amount "
+                    "FROM PaymentDetails_old_invoice;") &&
+            execute("DROP TABLE PaymentDetails_old_invoice;") &&
+            transaction.commit();
 
         if (!migrated) {
-            execute("ROLLBACK;");
+            transaction.rollback();
         }
 
         configureConnection();
     }
 
-    // Next migration target: rename DB column PaymentDetails.invoice_id to
-    // base_document_id. For now it stores BasePaymentDocuments.id.
+    if (sqlite_table_exists(db, "PaymentDetails") &&
+        sqlite_column_exists(db, "PaymentDetails", "invoice_id") &&
+        !sqlite_column_exists(db, "PaymentDetails", "base_document_id")) {
+        execute("PRAGMA foreign_keys = OFF;");
+
+        TransactionGuard transaction(*this);
+        bool migrated =
+            transaction.started() &&
+            execute("ALTER TABLE PaymentDetails RENAME TO "
+                    "PaymentDetails_old_invoice_column;") &&
+            execute("CREATE TABLE PaymentDetails ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "payment_id INTEGER NOT NULL,"
+                    "kosgu_id INTEGER,"
+                    "contract_id INTEGER,"
+                    "base_document_id INTEGER,"
+                    "amount REAL NOT NULL,"
+                    "FOREIGN KEY(payment_id) REFERENCES "
+                    "Payments(id) ON DELETE CASCADE,"
+                    "FOREIGN KEY(kosgu_id) REFERENCES KOSGU(id),"
+                    "FOREIGN KEY(contract_id) REFERENCES Contracts(id),"
+                    "FOREIGN KEY(base_document_id) REFERENCES "
+                    "BasePaymentDocuments(id));") &&
+            execute("INSERT INTO PaymentDetails "
+                    "(id, payment_id, kosgu_id, contract_id, "
+                    "base_document_id, amount) "
+                    "SELECT id, payment_id, kosgu_id, contract_id, "
+                    "invoice_id, amount "
+                    "FROM PaymentDetails_old_invoice_column;") &&
+            execute("DROP TABLE PaymentDetails_old_invoice_column;") &&
+            transaction.commit();
+
+        if (!migrated) {
+            transaction.rollback();
+        }
+
+        configureConnection();
+    }
+
+    add_column_if_missing("PaymentDetails", "base_document_id",
+                          "base_document_id INTEGER");
+
     execute("CREATE TABLE IF NOT EXISTS PaymentBaseDocumentLinks ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
             "payment_id INTEGER NOT NULL,"
@@ -167,6 +464,12 @@ void DatabaseManager::checkAndUpdateDatabaseSchema() {
             "FOREIGN KEY(base_document_id) REFERENCES BasePaymentDocuments(id) ON DELETE CASCADE,"
             "UNIQUE(payment_id, base_document_id));");
     applyPerformanceIndexes();
+
+    if (!sqlite_table_exists(db, "PaymentDetails") ||
+        sqlite_column_exists(db, "PaymentDetails", "base_document_id")) {
+        execute("UPDATE SchemaVersion SET version = 2, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = 1;");
+    }
 }
 
 void DatabaseManager::applyPerformanceIndexes() {
@@ -182,12 +485,24 @@ void DatabaseManager::applyPerformanceIndexes() {
         {"Contracts",
          "CREATE INDEX IF NOT EXISTS idx_contracts_number_date_cp "
          "ON Contracts(number, date, counterparty_id);"},
+        {"Contracts",
+         "CREATE INDEX IF NOT EXISTS idx_contracts_counterparty "
+         "ON Contracts(counterparty_id);"},
+        {"Contracts",
+         "CREATE INDEX IF NOT EXISTS idx_contracts_review_flags "
+         "ON Contracts(is_for_checking, is_for_special_control, is_found);"},
         {"Payments",
          "CREATE INDEX IF NOT EXISTS idx_payments_date_doc_amount_cp "
          "ON Payments(date, doc_number, amount, counterparty_id);"},
         {"Payments",
          "CREATE INDEX IF NOT EXISTS idx_payments_counterparty "
          "ON Payments(counterparty_id);"},
+        {"Payments",
+         "CREATE INDEX IF NOT EXISTS idx_payments_type_date "
+         "ON Payments(type, date);"},
+        {"Payments",
+         "CREATE INDEX IF NOT EXISTS idx_payments_doc_number "
+         "ON Payments(doc_number);"},
         {"PaymentDetails",
          "CREATE INDEX IF NOT EXISTS idx_payment_details_payment "
          "ON PaymentDetails(payment_id);"},
@@ -199,7 +514,7 @@ void DatabaseManager::applyPerformanceIndexes() {
          "ON PaymentDetails(contract_id);"},
         {"PaymentDetails",
          "CREATE INDEX IF NOT EXISTS idx_payment_details_base_doc "
-         "ON PaymentDetails(invoice_id);"},
+         "ON PaymentDetails(base_document_id);"},
         {"BasePaymentDocuments",
          "CREATE INDEX IF NOT EXISTS idx_base_docs_number_date_cp "
          "ON BasePaymentDocuments(number, date, counterparty_name);"},
@@ -209,6 +524,9 @@ void DatabaseManager::applyPerformanceIndexes() {
         {"BasePaymentDocuments",
          "CREATE INDEX IF NOT EXISTS idx_base_docs_payment "
          "ON BasePaymentDocuments(payment_id);"},
+        {"BasePaymentDocuments",
+         "CREATE INDEX IF NOT EXISTS idx_base_docs_review_flags "
+         "ON BasePaymentDocuments(is_for_checking, is_checked);"},
         {"PaymentBaseDocumentLinks",
          "CREATE INDEX IF NOT EXISTS idx_payment_base_doc_links_payment "
          "ON PaymentBaseDocumentLinks(payment_id);"},
@@ -223,7 +541,11 @@ void DatabaseManager::applyPerformanceIndexes() {
          "ON BasePaymentDocumentDetails(document_id);"},
         {"BasePaymentDocumentDetails",
          "CREATE INDEX IF NOT EXISTS idx_base_doc_details_kosgu "
-         "ON BasePaymentDocumentDetails(kosgu_id);"}};
+         "ON BasePaymentDocumentDetails(kosgu_id);"},
+        {"BasePaymentDocumentDetails",
+         "CREATE INDEX IF NOT EXISTS idx_base_doc_details_signature "
+         "ON BasePaymentDocumentDetails(document_id, operation_content, "
+         "debit_account, credit_account, kosgu_id, amount);"}};
 
     for (const auto &index : indexes) {
         if (sqlite_table_exists(db, index.table)) {
@@ -267,6 +589,37 @@ bool DatabaseManager::commitTransaction() {
 
 bool DatabaseManager::rollbackTransaction() {
     return execute("ROLLBACK;");
+}
+
+DatabaseManager::TransactionGuard::TransactionGuard(DatabaseManager& manager)
+    : manager(manager), active(manager.beginTransaction()) {}
+
+DatabaseManager::TransactionGuard::~TransactionGuard() {
+    if (active) {
+        manager.rollbackTransaction();
+    }
+}
+
+bool DatabaseManager::TransactionGuard::started() const { return active; }
+
+bool DatabaseManager::TransactionGuard::commit() {
+    if (!active) {
+        return false;
+    }
+    if (!manager.commitTransaction()) {
+        manager.rollbackTransaction();
+        active = false;
+        return false;
+    }
+    active = false;
+    return true;
+}
+
+void DatabaseManager::TransactionGuard::rollback() {
+    if (active) {
+        manager.rollbackTransaction();
+        active = false;
+    }
 }
 
 bool DatabaseManager::createDatabase(const std::string &filepath) {
@@ -322,12 +675,12 @@ bool DatabaseManager::createDatabase(const std::string &filepath) {
         "payment_id INTEGER NOT NULL,"
         "kosgu_id INTEGER,"
         "contract_id INTEGER,"
-        "invoice_id INTEGER,"
+        "base_document_id INTEGER,"
         "amount REAL NOT NULL,"
         "FOREIGN KEY(payment_id) REFERENCES Payments(id) ON DELETE CASCADE,"
         "FOREIGN KEY(kosgu_id) REFERENCES KOSGU(id),"
         "FOREIGN KEY(contract_id) REFERENCES Contracts(id),"
-        "FOREIGN KEY(invoice_id) REFERENCES BasePaymentDocuments(id));",
+        "FOREIGN KEY(base_document_id) REFERENCES BasePaymentDocuments(id));",
 
         // Документы Основания Платежа (обобщённая сущность)
         "CREATE TABLE IF NOT EXISTS BasePaymentDocuments ("
@@ -1691,7 +2044,7 @@ bool DatabaseManager::addPaymentDetail(PaymentDetail &detail) {
         return false;
     std::string sql =
         "INSERT INTO PaymentDetails (payment_id, kosgu_id, contract_id, "
-        "invoice_id, amount) VALUES (?, ?, ?, ?, ?);";
+        "base_document_id, amount) VALUES (?, ?, ?, ?, ?);";
     sqlite3_stmt *stmt = nullptr;
     int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
@@ -1731,7 +2084,7 @@ static int payment_detail_select_callback(void *data, int argc, char **argv,
             pd.kosgu_id = argv[i] ? std::stoi(argv[i]) : -1;
         else if (colName == "contract_id")
             pd.contract_id = argv[i] ? std::stoi(argv[i]) : -1;
-        else if (colName == "invoice_id")
+        else if (colName == "base_document_id" || colName == "invoice_id")
             pd.base_document_id = argv[i] ? std::stoi(argv[i]) : -1;
         else if (colName == "amount")
             pd.amount = argv[i] ? std::stod(argv[i]) : 0.0;
@@ -1797,7 +2150,7 @@ bool DatabaseManager::updatePaymentDetail(const PaymentDetail &detail) {
     if (!db)
         return false;
     std::string sql = "UPDATE PaymentDetails SET kosgu_id = ?, contract_id = "
-                      "?, invoice_id = ?, amount = ? WHERE id = ?;";
+                      "?, base_document_id = ?, amount = ? WHERE id = ?;";
     sqlite3_stmt *stmt = nullptr;
     int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
@@ -1881,7 +2234,7 @@ bool DatabaseManager::bulkUpdatePaymentDetails(
 
     // Basic validation to prevent SQL injection
     if (field_to_update != "kosgu_id" && field_to_update != "contract_id" &&
-        field_to_update != "invoice_id") {
+        field_to_update != "base_document_id") {
         std::cerr << "Invalid field to update: " << field_to_update
                   << std::endl;
         return false;
@@ -2849,7 +3202,7 @@ std::vector<ContractPaymentInfo> DatabaseManager::getPaymentInfoForBasePaymentDo
         "c.name "
         "FROM Payments p "
         "JOIN ("
-        "    SELECT payment_id FROM PaymentDetails WHERE invoice_id = ? "
+        "    SELECT payment_id FROM PaymentDetails WHERE base_document_id = ? "
         "    UNION "
         "    SELECT payment_id FROM PaymentBaseDocumentLinks "
         "    WHERE base_document_id = ? AND IFNULL(match_status, '') <> 'rejected'"
@@ -3537,6 +3890,7 @@ std::vector<DatabaseManager::PaymentMatch> DatabaseManager::findMatchingPayments
         "FROM Payments p "
         "LEFT JOIN Counterparties c ON p.counterparty_id = c.id "
         "WHERE p.id IS NOT NULL "
+        "  AND IFNULL(c.is_contract_optional, 0) = 0 "
         "ORDER BY p.date DESC";
 
     sqlite3_stmt* stmt = nullptr;
@@ -3690,7 +4044,7 @@ std::vector<DatabaseManager::ReconciliationRecord> DatabaseManager::getReconcili
         "LEFT JOIN PaymentDetails pd ON p.id = pd.payment_id "
         "LEFT JOIN Counterparties c ON p.counterparty_id = c.id "
         "LEFT JOIN KOSGU k ON pd.kosgu_id = k.id "
-        "LEFT JOIN BasePaymentDocuments bpd ON pd.invoice_id = bpd.id "
+        "LEFT JOIN BasePaymentDocuments bpd ON pd.base_document_id = bpd.id "
         "LEFT JOIN Contracts ctr ON bpd.contract_id = ctr.id "
         "LEFT JOIN BasePaymentDocumentDetails bpdd ON bpd.id = bpdd.document_id "
         "LEFT JOIN KOSGU bpdd_k ON bpdd.kosgu_id = bpdd_k.id "

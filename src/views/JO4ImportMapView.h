@@ -48,6 +48,8 @@ private:
 
     // Текущий маппинг: поле -> индекс колонки (-1 = не выбрано)
     std::map<std::string, int> currentMapping;
+    JournalOrder4DryRunResult dryRunResult;
+    bool dryRunDirty = true;
 
     std::atomic<float>* progressPtr = nullptr;
     std::string* messagePtr = nullptr;
@@ -56,4 +58,5 @@ private:
     std::atomic<bool>* cancel_flag_ptr = nullptr;
 
     void StartImport();
+    void RecalculateDryRun();
 };

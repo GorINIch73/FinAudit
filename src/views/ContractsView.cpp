@@ -70,9 +70,9 @@ ContractsView::GetDataAsStrings() {
 }
 
 void ContractsView::OnDeactivate() { SaveChanges(); }
-void ContractsView::ForceSave() { SaveChanges(); }
+bool ContractsView::ForceSave() { return SaveChanges(); }
 
-void ContractsView::SaveChanges() {
+bool ContractsView::SaveChanges() {
     // Сравниваем поля редактора с оригиналом
     bool hasChanges = (selectedContract.id != -1) && (
         selectedContract.number != originalContract.number ||
@@ -88,11 +88,13 @@ void ContractsView::SaveChanges() {
     );
 
     if (!hasChanges) {
-        return;
+        return true;
     }
 
     if (dbManager && selectedContract.id != -1) {
-        dbManager->updateContract(selectedContract);
+        if (!dbManager->updateContract(selectedContract)) {
+            return false;
+        }
         // Обновляем запись в локальных массивых
         auto it = std::find_if(
             contracts.begin(), contracts.end(), [&](const Contract &c) {
@@ -107,9 +109,12 @@ void ContractsView::SaveChanges() {
         // Применяем сохранённую сортировку
         ApplyStoredSorting();
         originalContract = selectedContract;
+    } else {
+        return false;
     }
 
     isDirty = false;
+    return true;
 }
 
 void ContractsView::SortContracts(const ImGuiTableSortSpecs *sort_specs) {
@@ -226,10 +231,46 @@ void ContractsView::ApplyStoredSorting() {
     SortContracts(&wrapped_specs);
 }
 
+bool ContractsView::StartGroupOperation(GroupOperationType operation) {
+    if (!dbManager || current_operation != NONE || m_filtered_contracts.empty()) {
+        return false;
+    }
+
+    if (uiManager) {
+        std::string backupPath;
+        if (!uiManager->BackupCurrentDatabase("group_contracts", backupPath)) {
+            return false;
+        }
+    }
+
+    cancel_group_operation = false;
+    items_to_process = m_filtered_contracts;
+    processed_items = 0;
+    group_transaction_active = false;
+    current_operation = operation;
+    return true;
+}
+
 void ContractsView::ProcessGroupOperation() {
     if (!dbManager || current_operation == NONE || items_to_process.empty()) {
+        if (group_transaction_active && dbManager) {
+            dbManager->rollbackTransaction();
+            group_transaction_active = false;
+        }
         show_group_operation_progress_popup = false;
         return;
+    }
+
+    if (!group_transaction_active && processed_items == 0) {
+        if (!dbManager->beginTransaction()) {
+            current_operation = NONE;
+            processed_items = 0;
+            items_to_process.clear();
+            show_group_operation_progress_popup = false;
+            cancel_group_operation = false;
+            return;
+        }
+        group_transaction_active = true;
     }
 
     const int items_per_frame = 20;
@@ -239,6 +280,10 @@ void ContractsView::ProcessGroupOperation() {
            processed_in_frame < items_per_frame) {
         // Check for cancellation
         if (cancel_group_operation) {
+            if (group_transaction_active) {
+                dbManager->rollbackTransaction();
+                group_transaction_active = false;
+            }
             current_operation = NONE;
             processed_items = 0;
             items_to_process.clear();
@@ -279,6 +324,13 @@ void ContractsView::ProcessGroupOperation() {
     }
 
     if (processed_items >= items_to_process.size()) {
+        if (group_transaction_active) {
+            if (!dbManager->commitTransaction()) {
+                dbManager->rollbackTransaction();
+            }
+            group_transaction_active = false;
+        }
+
         // Operation finished
         current_operation = NONE;
         processed_items = 0;
@@ -662,11 +714,7 @@ void ContractsView::Render() {
                 if (!m_filtered_contracts.empty() &&
                     current_operation == NONE) {
                     this->on_group_operation_confirm = [this]() {
-                        this->cancel_group_operation =
-                            false; // Reset cancel flag
-                        this->items_to_process = this->m_filtered_contracts;
-                        this->processed_items = 0;
-                        this->current_operation = SET_FOR_CHECKING;
+                        this->StartGroupOperation(SET_FOR_CHECKING);
                     };
                     show_group_operation_confirmation_popup = true;
                 }
@@ -676,11 +724,7 @@ void ContractsView::Render() {
                 if (!m_filtered_contracts.empty() &&
                     current_operation == NONE) {
                     this->on_group_operation_confirm = [this]() {
-                        this->cancel_group_operation =
-                            false; // Reset cancel flag
-                        this->items_to_process = this->m_filtered_contracts;
-                        this->processed_items = 0;
-                        this->current_operation = UNSET_FOR_CHECKING;
+                        this->StartGroupOperation(UNSET_FOR_CHECKING);
                     };
                     show_group_operation_confirmation_popup = true;
                 }
@@ -689,11 +733,7 @@ void ContractsView::Render() {
                 if (!m_filtered_contracts.empty() &&
                     current_operation == NONE) {
                     this->on_group_operation_confirm = [this]() {
-                        this->cancel_group_operation =
-                            false; // Reset cancel flag
-                        this->items_to_process = this->m_filtered_contracts;
-                        this->processed_items = 0;
-                        this->current_operation = SET_SPECIAL_CONTROL;
+                        this->StartGroupOperation(SET_SPECIAL_CONTROL);
                     };
                     show_group_operation_confirmation_popup = true;
                 }
@@ -703,11 +743,7 @@ void ContractsView::Render() {
                 if (!m_filtered_contracts.empty() &&
                     current_operation == NONE) {
                     this->on_group_operation_confirm = [this]() {
-                        this->cancel_group_operation =
-                            false; // Reset cancel flag
-                        this->items_to_process = this->m_filtered_contracts;
-                        this->processed_items = 0;
-                        this->current_operation = UNSET_SPECIAL_CONTROL;
+                        this->StartGroupOperation(UNSET_SPECIAL_CONTROL);
                     };
                     show_group_operation_confirmation_popup = true;
                 }
@@ -716,11 +752,7 @@ void ContractsView::Render() {
                 if (!m_filtered_contracts.empty() &&
                     current_operation == NONE) {
                     this->on_group_operation_confirm = [this]() {
-                        this->cancel_group_operation =
-                            false; // Reset cancel flag
-                        this->items_to_process = this->m_filtered_contracts;
-                        this->processed_items = 0;
-                        this->current_operation = CLEAR_PROCUREMENT_CODE;
+                        this->StartGroupOperation(CLEAR_PROCUREMENT_CODE);
                     };
                     show_group_operation_confirmation_popup = true;
                 }

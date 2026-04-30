@@ -5,6 +5,7 @@
 #include <iostream>
 #include <iomanip>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -244,7 +245,8 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
     std::regex amount_regex(
         "\\((\\d{3}-\\d{4}-\\d{10}-\\d{3}):\\s*([\\d=,]+)\\s*ЛС\\)");
 
-    if (!dbManager->beginTransaction()) {
+    DatabaseManager::TransactionGuard transaction(*dbManager);
+    if (!transaction.started()) {
         std::lock_guard<std::mutex> lock(message_mutex);
         message = "Ошибка: не удалось начать транзакцию импорта.";
         return false;
@@ -324,7 +326,7 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
     while (std::getline(file, line)) {
         // Check for cancellation
         if (cancel_flag) {
-            dbManager->rollbackTransaction();
+            transaction.rollback();
             std::lock_guard<std::mutex> lock(message_mutex);
             message = "Импорт отменен пользователем.";
             progress = 0.0f; // Reset progress
@@ -491,8 +493,7 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
         }
     }
 
-    if (!dbManager->commitTransaction()) {
-        dbManager->rollbackTransaction();
+    if (!transaction.commit()) {
         std::lock_guard<std::mutex> lock(message_mutex);
         message = "Ошибка: не удалось зафиксировать транзакцию импорта.";
         progress = 0.0f;
@@ -559,7 +560,8 @@ bool ImportManager::importIKZFromFile(
     std::string line;
     std::getline(file, line); // Skip header line
 
-    if (!dbManager->beginTransaction()) {
+    DatabaseManager::TransactionGuard transaction(*dbManager);
+    if (!transaction.started()) {
         std::lock_guard<std::mutex> lock(message_mutex);
         message = "Ошибка: не удалось начать транзакцию импорта ИКЗ.";
         return false;
@@ -646,8 +648,7 @@ bool ImportManager::importIKZFromFile(
         }
     }
 
-    if (!dbManager->commitTransaction()) {
-        dbManager->rollbackTransaction();
+    if (!transaction.commit()) {
         std::lock_guard<std::mutex> lock(message_mutex);
         message = "Ошибка: не удалось зафиксировать транзакцию импорта ИКЗ.";
         progress = 0.0f;
@@ -670,6 +671,94 @@ static std::string get_jo4_value(const std::vector<std::string>& row, const Colu
     int col_index = it->second;
     if (col_index < 0 || col_index >= static_cast<int>(row.size())) return "";
     return trim(row[col_index]);
+}
+
+JournalOrder4DryRunResult ImportManager::AnalyzeJournalOrder4FromTsv(
+    const std::string& filepath,
+    const ColumnMapping& mapping
+) {
+    JournalOrder4DryRunResult result;
+
+    std::ifstream file(filepath);
+    if (!file.is_open()) {
+        result.sample_errors.push_back("Не удалось открыть файл: " + filepath);
+        return result;
+    }
+
+    std::string line;
+    if (!std::getline(file, line)) {
+        result.sample_errors.push_back("Файл пуст или нечитаем.");
+        return result;
+    }
+
+    char delimiter = detectDelimiter(line);
+    std::set<std::string> document_keys;
+    std::set<std::string> duplicate_keys_seen;
+
+    int line_num = 1;
+    while (std::getline(file, line)) {
+        line_num++;
+        if (line.empty()) {
+            continue;
+        }
+
+        result.total_rows++;
+        std::vector<std::string> row = split(line, delimiter);
+
+        std::string doc_date = get_jo4_value(row, mapping, "Дата документа");
+        std::string doc_number =
+            get_jo4_value(row, mapping, "Номер документа");
+        std::string doc_name =
+            get_jo4_value(row, mapping, "Наименование документа");
+        std::string counterparty_name =
+            get_jo4_value(row, mapping, "Наименование показателя");
+        std::string debit_account =
+            get_jo4_value(row, mapping, "Счет дебет");
+        std::string amount_str = get_jo4_value(row, mapping, "Сумма");
+
+        bool row_valid = true;
+        if (doc_number.empty()) {
+            result.missing_number_rows++;
+            row_valid = false;
+        }
+        if (doc_date.empty()) {
+            result.missing_date_rows++;
+            row_valid = false;
+        }
+
+        double amount = 0.0;
+        if (!parseAmount(amount_str, amount)) {
+            result.invalid_amount_rows++;
+            row_valid = false;
+            if (result.sample_errors.size() < 8) {
+                result.sample_errors.push_back(
+                    "Строка " + std::to_string(line_num) +
+                    ": неверная сумма '" + amount_str + "'");
+            }
+        }
+
+        if (extractKosguCodeFromAccount(debit_account).empty()) {
+            result.missing_kosgu_rows++;
+        }
+
+        std::string date_db =
+            doc_date.length() >= 8 ? convertDateToDBFormat(doc_date) : doc_date;
+        std::string key =
+            doc_number + "|" + date_db + "|" + doc_name + "|" + counterparty_name;
+        if (!doc_number.empty() && !date_db.empty()) {
+            if (!document_keys.insert(key).second &&
+                duplicate_keys_seen.insert(key).second) {
+                result.duplicate_document_rows++;
+            }
+        }
+
+        if (row_valid) {
+            result.valid_rows++;
+        }
+    }
+
+    result.document_keys = static_cast<int>(document_keys.size());
+    return result;
 }
 
 bool ImportManager::ImportJournalOrder4FromTsv(
@@ -738,7 +827,8 @@ bool ImportManager::ImportJournalOrder4FromTsv(
         return id;
     };
 
-    if (!dbManager->beginTransaction()) {
+    DatabaseManager::TransactionGuard transaction(*dbManager);
+    if (!transaction.started()) {
         std::lock_guard<std::mutex> lock(message_mutex);
         message = "Ошибка: не удалось начать транзакцию импорта ЖО4.";
         return false;
@@ -774,7 +864,7 @@ bool ImportManager::ImportJournalOrder4FromTsv(
 
     while (std::getline(file, line)) {
         if (cancel_flag) {
-            dbManager->rollbackTransaction();
+            transaction.rollback();
             std::lock_guard<std::mutex> lock(message_mutex);
             message = "Импорт ЖО4 отменен пользователем.";
             progress = 0.0f;
@@ -889,8 +979,7 @@ bool ImportManager::ImportJournalOrder4FromTsv(
         }
     }
 
-    if (!dbManager->commitTransaction()) {
-        dbManager->rollbackTransaction();
+    if (!transaction.commit()) {
         std::lock_guard<std::mutex> lock(message_mutex);
         message = "Ошибка: не удалось зафиксировать транзакцию импорта ЖО4.";
         progress = 0.0f;

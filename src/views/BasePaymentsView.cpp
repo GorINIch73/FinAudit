@@ -208,18 +208,24 @@ void BasePaymentsView::SortDocuments(const ImGuiTableSortSpecs* sort_specs) {
     }
 }
 
-void BasePaymentsView::SaveChanges() {
+bool BasePaymentsView::SaveChanges() {
     if (dbManager) {
         // Проверяем, есть ли несохранённый документ (id == -1)
-        if (selectedDoc.id == -1) {
+        if (selectedDoc.id == -1 && isDirty) {
             // Новый документ ещё не сохранён - добавляем его
-            dbManager->addBasePaymentDocument(selectedDoc);
+            int new_id = dbManager->addBasePaymentDocument(selectedDoc);
+            if (new_id == -1) {
+                return false;
+            }
+            selectedDoc.id = new_id;
             // Добавляем новую запись в локальные массивы
             documents.push_back(selectedDoc);
             m_filtered_documents.push_back(selectedDoc);
         } else if (isDirty) {
             // Существующий документ изменён - обновляем
-            dbManager->updateBasePaymentDocument(selectedDoc);
+            if (!dbManager->updateBasePaymentDocument(selectedDoc)) {
+                return false;
+            }
             // Обновляем локальные массивы напрямую, чтобы не сбрасывать сортировку
             for (auto& doc : documents) {
                 if (doc.id == selectedDoc.id) { doc = selectedDoc; break; }
@@ -232,19 +238,22 @@ void BasePaymentsView::SaveChanges() {
 
         // Сохраняем изменения в расшифровке
         if (isDetailDirty && selectedDetail.id != -1) {
-            dbManager->updateBasePaymentDocumentDetail(selectedDetail);
+            if (!dbManager->updateBasePaymentDocumentDetail(selectedDetail)) {
+                return false;
+            }
             isDetailDirty = false;
         }
+    } else if (isDirty || isDetailDirty) {
+        return false;
     }
+    return true;
 }
 
 void BasePaymentsView::OnDeactivate() {
     SaveChanges();
     IsVisible = false;
 }
-void BasePaymentsView::ForceSave() {
-    SaveChanges();
-}
+bool BasePaymentsView::ForceSave() { return SaveChanges(); }
 
 std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>>
 BasePaymentsView::GetDataAsStrings() {
@@ -314,34 +323,26 @@ void BasePaymentsView::Render() {
                 memset(groupKosguFilter, 0, sizeof(groupKosguFilter));
                 show_group_operation_confirmation_popup = true;
                 on_group_operation_confirm = [&]() {
-                    items_to_process = m_filtered_documents;
-                    processed_items = 0;
-                    current_operation = ADD_KOSGU;
+                    StartGroupOperation(ADD_KOSGU);
                 };
             }
         }
         ImGui::SameLine();
         if (ImGui::Button("Очистить 'Для сверки'")) {
             if (!m_filtered_documents.empty() && current_operation == NONE) {
-                items_to_process = m_filtered_documents;
-                processed_items = 0;
-                current_operation = UNSET_FOR_CHECKING;
+                StartGroupOperation(UNSET_FOR_CHECKING);
             }
         }
         ImGui::SameLine();
         if (ImGui::Button("Отметить 'Для сверки'")) {
             if (!m_filtered_documents.empty() && current_operation == NONE) {
-                items_to_process = m_filtered_documents;
-                processed_items = 0;
-                current_operation = SET_FOR_CHECKING;
+                StartGroupOperation(SET_FOR_CHECKING);
             }
         }
         ImGui::SameLine();
         if (ImGui::Button("Удалить расшифровки")) {
             if (!m_filtered_documents.empty() && current_operation == NONE) {
-                items_to_process = m_filtered_documents;
-                processed_items = 0;
-                current_operation = DELETE_DETAILS;
+                StartGroupOperation(DELETE_DETAILS);
             }
         }
 
@@ -352,23 +353,19 @@ void BasePaymentsView::Render() {
                 group_auto_match_docs = m_filtered_documents;
                 show_group_operation_confirmation_popup = true;
                 on_group_operation_confirm = [&]() {
-                    items_to_process = m_filtered_documents;
                     group_auto_match_total = 0;
                     group_auto_match_linked = 0;
                     group_auto_match_no_match = 0;
                     group_auto_match_chunk_start = 0;
                     group_auto_match_log.clear();
-                    show_auto_match_popup = true;
-                    current_operation = AUTO_MATCH_PAYMENTS;
+                    show_auto_match_popup = StartGroupOperation(AUTO_MATCH_PAYMENTS);
                 };
             }
         }
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_LINK_SLASH " Очистить связь с ПП")) {
             if (!m_filtered_documents.empty() && current_operation == NONE) {
-                items_to_process = m_filtered_documents;
-                processed_items = 0;
-                current_operation = CLEAR_PAYMENT_LINK;
+                StartGroupOperation(CLEAR_PAYMENT_LINK);
             }
         }
     }
@@ -858,10 +855,43 @@ void BasePaymentsView::AutoMatchPayment() {
     show_payment_match_popup = true;
 }
 
+bool BasePaymentsView::StartGroupOperation(GroupOperationType operation) {
+    if (!dbManager || current_operation != NONE || m_filtered_documents.empty()) {
+        return false;
+    }
+
+    if (uiManager) {
+        std::string backupPath;
+        if (!uiManager->BackupCurrentDatabase("group_base_documents", backupPath)) {
+            return false;
+        }
+    }
+
+    items_to_process = m_filtered_documents;
+    processed_items = 0;
+    group_transaction_active = false;
+    current_operation = operation;
+    return true;
+}
+
 void BasePaymentsView::ProcessGroupOperation() {
     if (!dbManager || current_operation == NONE || items_to_process.empty()) {
+        if (group_transaction_active && dbManager) {
+            dbManager->rollbackTransaction();
+            group_transaction_active = false;
+        }
         current_operation = NONE;
         return;
+    }
+
+    if (!group_transaction_active && processed_items == 0) {
+        if (!dbManager->beginTransaction()) {
+            current_operation = NONE;
+            processed_items = 0;
+            items_to_process.clear();
+            return;
+        }
+        group_transaction_active = true;
     }
 
     const int items_per_frame = 20;
@@ -921,6 +951,13 @@ void BasePaymentsView::ProcessGroupOperation() {
     }
 
     if (processed_items >= items_to_process.size()) {
+        if (group_transaction_active) {
+            if (!dbManager->commitTransaction()) {
+                dbManager->rollbackTransaction();
+            }
+            group_transaction_active = false;
+        }
+
         current_operation = NONE;
         processed_items = 0;
         items_to_process.clear();
@@ -931,10 +968,22 @@ void BasePaymentsView::ProcessGroupOperation() {
 
 void BasePaymentsView::ProcessAutoMatchPayments() {
     if (!dbManager || current_operation != AUTO_MATCH_PAYMENTS || group_auto_match_docs.empty()) {
+        if (group_transaction_active && dbManager) {
+            dbManager->rollbackTransaction();
+            group_transaction_active = false;
+        }
         if (current_operation == AUTO_MATCH_PAYMENTS) {
             current_operation = NONE;
         }
         return;
+    }
+
+    if (!group_transaction_active && group_auto_match_chunk_start == 0) {
+        if (!dbManager->beginTransaction()) {
+            current_operation = NONE;
+            return;
+        }
+        group_transaction_active = true;
     }
 
     const int chunk_size = 5;
@@ -983,6 +1032,13 @@ void BasePaymentsView::ProcessAutoMatchPayments() {
     }
 
     if (group_auto_match_chunk_start >= group_auto_match_docs.size()) {
+        if (group_transaction_active) {
+            if (!dbManager->commitTransaction()) {
+                dbManager->rollbackTransaction();
+            }
+            group_transaction_active = false;
+        }
+
         current_operation = NONE;
         m_dataDirty = true;
         RefreshData();

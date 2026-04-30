@@ -50,9 +50,9 @@ KosguView::GetDataAsStrings() {
 }
 
 void KosguView::OnDeactivate() { SaveChanges(); }
-void KosguView::ForceSave() { SaveChanges(); }
+bool KosguView::ForceSave() { return SaveChanges(); }
 
-void KosguView::SaveChanges() {
+bool KosguView::SaveChanges() {
     // Сравниваем поля редактора с оригиналом
     bool hasChanges = (selectedKosgu.id != -1) && (
         selectedKosgu.code != originalKosgu.code ||
@@ -61,11 +61,13 @@ void KosguView::SaveChanges() {
     );
 
     if (!hasChanges) {
-        return;
+        return true;
     }
 
     if (dbManager && selectedKosgu.id != -1) {
-        dbManager->updateKosguEntry(selectedKosgu);
+        if (!dbManager->updateKosguEntry(selectedKosgu)) {
+            return false;
+        }
         // Обновляем из БД и применяем сортировку
         kosguEntries = dbManager->getKosguEntries();
         m_filtered_kosgu_entries = kosguEntries;
@@ -79,9 +81,12 @@ void KosguView::SaveChanges() {
             }
         }
         originalKosgu = selectedKosgu;
+    } else {
+        return false;
     }
 
     isDirty = false;
+    return true;
 }
 
 void KosguView::UpdateFilteredKosgu() {

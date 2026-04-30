@@ -17,6 +17,18 @@ struct UnfoundContract {
     std::string ikz;
 };
 
+struct JournalOrder4DryRunResult {
+    int total_rows = 0;
+    int valid_rows = 0;
+    int document_keys = 0;
+    int duplicate_document_rows = 0;
+    int invalid_amount_rows = 0;
+    int missing_number_rows = 0;
+    int missing_date_rows = 0;
+    int missing_kosgu_rows = 0;
+    std::vector<std::string> sample_errors;
+};
+
 class ImportManager {
 public:
     ImportManager();
@@ -59,5 +71,10 @@ public:
         int& importedDocuments,
         int& importedDetails,
         std::vector<std::string>& errors
+    );
+
+    JournalOrder4DryRunResult AnalyzeJournalOrder4FromTsv(
+        const std::string& filepath,
+        const ColumnMapping& mapping
     );
 };

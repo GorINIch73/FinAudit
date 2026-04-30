@@ -24,13 +24,14 @@ public:
     void SetUIManager(UIManager* uiManager);
     std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>> GetDataAsStrings() override;
     void OnDeactivate() override;
-    void ForceSave() override;
+    bool ForceSave() override;
 
 private:
     void RefreshData();
     void RefreshDropdownData();
-    void SaveChanges();
-    void SaveDetailChanges();
+    bool SaveChanges();
+    bool SaveDetailChanges();
+    bool IsSelectedPaymentContractOptional() const;
 
     UIManager* uiManager = nullptr;
     std::vector<Payment> payments;
@@ -146,6 +147,8 @@ private:
     GroupOperationType current_operation = NONE;
     int processed_items = 0;
     std::vector<Payment> items_to_process;
+    bool group_transaction_active = false;
+    bool StartGroupOperation(GroupOperationType operation);
     void ProcessGroupOperation();
 
     // State for "Apply Regex" popup

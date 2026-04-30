@@ -47,8 +47,9 @@ public:
     void HandleFileDialogs();
     void SetWindowTitle(const std::string& db_path);
     void ShowContractRegistryNumbersView();
-    void SaveAllViews();
+    bool SaveAllViews();
     bool BackupCurrentDatabase(const std::string& reason, std::string& backupPath);
+    void ShowError(const std::string& message);
     SpecialQueryView* CreateSpecialQueryView(const std::string& title, const std::string& query);
     void ApplyTheme(int theme_index);
     void ApplyFont(int font_size);
@@ -97,6 +98,8 @@ public:
     std::string importMessage;
     std::mutex importMutex;
     std::atomic<bool> cancelImport;
+    std::string lastErrorMessage;
+    bool showErrorPopup = false;
 
     ImportManager* importManager = nullptr;
     ExportManager* exportManager = nullptr;

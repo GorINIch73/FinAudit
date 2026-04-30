@@ -37,6 +37,23 @@ public:
     bool commitTransaction();
     bool rollbackTransaction();
 
+    class TransactionGuard {
+    public:
+        explicit TransactionGuard(DatabaseManager& manager);
+        ~TransactionGuard();
+
+        TransactionGuard(const TransactionGuard&) = delete;
+        TransactionGuard& operator=(const TransactionGuard&) = delete;
+
+        bool started() const;
+        bool commit();
+        void rollback();
+
+    private:
+        DatabaseManager& manager;
+        bool active = false;
+    };
+
     // Settings
     Settings getSettings();
     bool updateSettings(const Settings& settings);
