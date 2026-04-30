@@ -545,7 +545,8 @@ void PaymentsView::Render() {
                     "SELECT p.date AS 'Дата', p.doc_number AS 'Номер док.', "
                     "p.type AS 'Тип', p.amount AS 'Сумма платежа', "
                     "pd.amount AS 'Сумма расшифровки', "
-                    "k.code AS 'КОСГУ', k.name AS 'Наименование КОСГУ', "
+                    "k.kps AS 'КПС', k.code AS 'КОСГУ', "
+                    "k.name AS 'Наименование КОСГУ', "
                     "c.name AS 'Контрагент', "
                     "p.description AS 'Назначение' "
                     "FROM Payments p "
@@ -570,6 +571,9 @@ void PaymentsView::Render() {
                              "OR LOWER(p.recipient) LIKE LOWER('%" +
                              std::string(filterText) +
                              "%') "
+                             "OR LOWER(k.kps) LIKE LOWER('%" +
+                             std::string(filterText) +
+                             "%') "
                              "OR LOWER(k.code) LIKE LOWER('%" +
                              std::string(filterText) +
                              "%') "
@@ -591,14 +595,15 @@ void PaymentsView::Render() {
                 // std::string query = "SELECT * FROM payments;"; // Placeholder
                 // /
                 std::string query =
-                    "SELECT STRFTIME('%Y', p.date) AS payment_year,k.code AS "
-                    "kosgu_code,p.type AS payment_type, k.name AS kosgu_name, "
+                    "SELECT STRFTIME('%Y', p.date) AS payment_year, "
+                    "k.kps AS kps, k.code AS kosgu_code, "
+                    "p.type AS payment_type, k.name AS kosgu_name, "
                     "SUM(pd.amount) AS total_amount FROM PaymentDetails AS pd "
                     "JOIN Payments AS p  ON pd.payment_id = p.id JOIN KOSGU AS "
                     "k ON pd.kosgu_id = k.id WHERE k.code IS NOT NULL AND "
                     "k.code != '' GROUP BY payment_year, payment_type, "
-                    "kosgu_code ORDER BY payment_year, "
-                    "payment_type, kosgu_code;";
+                    "kps, kosgu_code ORDER BY payment_year, "
+                    "payment_type, kps, kosgu_code;";
                 uiManager->CreateSpecialQueryView("Сверка с банком", query);
             }
         }
@@ -768,7 +773,11 @@ void PaymentsView::Render() {
 
             std::vector<CustomWidgets::ComboItem> kosguItems;
             for (const auto &k : kosguForDropdown) {
-                kosguItems.push_back({k.id, k.code + " " + k.name});
+                std::string label = k.code + " " + k.name;
+                if (!k.kps.empty()) {
+                    label += " | КПС " + k.kps;
+                }
+                kosguItems.push_back({k.id, label});
             }
             CustomWidgets::ComboWithFilter("КОСГУ", groupKosguId, kosguItems,
                                            groupKosguFilter,
@@ -814,7 +823,11 @@ void PaymentsView::Render() {
             if (replacement_target == 0) {
                 std::vector<CustomWidgets::ComboItem> kosguItems;
                 for (const auto &k : kosguForDropdown) {
-                    kosguItems.push_back({k.id, k.code + " " + k.name});
+                    std::string label = k.code + " " + k.name;
+                    if (!k.kps.empty()) {
+                        label += " | КПС " + k.kps;
+                    }
+                    kosguItems.push_back({k.id, label});
                 }
                 CustomWidgets::ComboWithFilter(
                     "Новый КОСГУ", replacement_kosgu_id, kosguItems,
@@ -1410,14 +1423,16 @@ void PaymentsView::Render() {
 
                     if (!need_to_break) {
                         ImGui::TableNextColumn();
-                        const char *kosguCode = "N/A";
+                        std::string kosguCode = "N/A";
                         for (const auto &k : kosguForDropdown) {
                             if (k.id == paymentDetails[i].kosgu_id) {
-                                kosguCode = k.code.c_str();
+                                kosguCode = k.kps.empty()
+                                                ? k.code
+                                                : k.code + " / " + k.kps;
                                 break;
                             }
                         }
-                        ImGui::Text("%s", kosguCode);
+                        ImGui::Text("%s", kosguCode.c_str());
 
                         ImGui::TableNextColumn();
                         const char *contractNumber = "N/A";
@@ -1457,7 +1472,11 @@ void PaymentsView::Render() {
                 // Dropdown for KOSGU
                 std::vector<CustomWidgets::ComboItem> kosguItems;
                 for (const auto &k : kosguForDropdown) {
-                    kosguItems.push_back({k.id, k.code});
+                    std::string label = k.code;
+                    if (!k.kps.empty()) {
+                        label += " | КПС " + k.kps;
+                    }
+                    kosguItems.push_back({k.id, label});
                 }
                 if (CustomWidgets::ComboWithFilter(
                         "КОСГУ##detail", selectedDetail.kosgu_id, kosguItems,
@@ -1970,14 +1989,16 @@ void PaymentsView::RenderJo4DocumentsPanel() {
                     ImGui::TableNextColumn();
                     ImGui::Text("%s", detail.credit_account.c_str());
                     ImGui::TableNextColumn();
-                    const char *kosguCode = "N/A";
+                    std::string kosguCode = "N/A";
                     for (const auto &k : kosguForDropdown) {
                         if (k.id == detail.kosgu_id) {
-                            kosguCode = k.code.c_str();
+                            kosguCode = k.kps.empty()
+                                            ? k.code
+                                            : k.code + " / " + k.kps;
                             break;
                         }
                     }
-                    ImGui::Text("%s", kosguCode);
+                    ImGui::Text("%s", kosguCode.c_str());
                     ImGui::TableNextColumn();
                     ImGui::Text("%.2f", detail.amount);
                 }

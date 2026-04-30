@@ -61,13 +61,6 @@ int main(int, char **) {
     // Установка стиля ImGui
     // ImGui::StyleColorsDark(); // This will be set by the theme loader
 
-    // Подсветка разделителей для докинга
-    ImGuiStyle &style = ImGui::GetStyle();
-    style.Colors[ImGuiCol_Separator] = ImVec4(0.70f, 0.50f, 0.00f, 1.00f);
-    style.Colors[ImGuiCol_SeparatorHovered] =
-        ImVec4(0.90f, 0.70f, 0.00f, 1.00f);
-    style.Colors[ImGuiCol_SeparatorActive] = ImVec4(1.00f, 0.80f, 0.20f, 1.00f);
-
     // Загрузка шрифта будет обработана UIManager
 
     // Инициализация бэкендов для GLFW и OpenGL
@@ -186,6 +179,10 @@ int main(int, char **) {
             if (ImGui::BeginMenu(ICON_FA_FILE_PDF " Отчеты")) {
                 if (ImGui::MenuItem(ICON_FA_DATABASE " SQL Запрос")) {
                     uiManager.CreateView<SqlQueryView>();
+                }
+                if (ImGui::MenuItem(ICON_FA_CHART_PIE
+                                    " Структура расходов")) {
+                    uiManager.CreateView<ExpenseStructureView>();
                 }
                 if (ImGui::MenuItem(ICON_FA_TRIANGLE_EXCLAMATION
                                     " Риск-анализ")) {

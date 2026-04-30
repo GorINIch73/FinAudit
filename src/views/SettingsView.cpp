@@ -2,6 +2,7 @@
 #include "../CustomWidgets.h"
 #include "../UIManager.h" // Added UIManager include
 #include "imgui.h"
+#include <algorithm>
 #include <iostream>
 
 SettingsView::SettingsView() { Title = "Настройки"; }
@@ -84,7 +85,21 @@ void SettingsView::Render() {
         }
 
         // Theme selection UI
-        const char *themes[] = {"Dark", "Light", "Classic"};
+        const char *themes[] = {
+            "Темная",
+            "Светлая",
+            "Классическая",
+            "Графит",
+            "Северная",
+            "Светлая рабочая",
+            "Полночь",
+            "Лес",
+            "Песочная",
+            "Контрастная"};
+        if (currentSettings.theme < 0 ||
+            currentSettings.theme >= IM_ARRAYSIZE(themes)) {
+            currentSettings.theme = 0;
+        }
         if (ImGui::Combo("Тема оформления", &currentSettings.theme, themes,
                          IM_ARRAYSIZE(themes))) {
             isDirty = true;
@@ -93,15 +108,16 @@ void SettingsView::Render() {
             }
         }
 
-        if (ImGui::InputInt("Размер шрифта", &currentSettings.font_size)) {
+        currentSettings.font_size = std::clamp(currentSettings.font_size, 14, 40);
+        if (ImGui::SliderInt("Размер шрифта", &currentSettings.font_size, 14, 40)) {
             isDirty = true;
-            // if (uiManager) {
-            //     uiManager->ApplyFont(currentSettings.font_size);
-            // }
+            if (uiManager) {
+                uiManager->ApplyFont(currentSettings.font_size);
+            }
         }
         //  Подсказка
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Требуется перезапуск.");
+            ImGui::SetTooltip("Применяется сразу.");
         }
 
         ImGui::Separator();

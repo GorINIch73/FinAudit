@@ -63,6 +63,7 @@ public:
     bool updateKosguEntry(const Kosgu& entry);
     bool deleteKosguEntry(int id);
     int getKosguIdByCode(const std::string& code);
+    int getKosguIdByCodeAndKps(const std::string& code, const std::string& kps);
 
     bool addCounterparty(Counterparty& counterparty); // Pass by reference to get the id back
     int getCounterpartyIdByNameInn(const std::string& name, const std::string& inn);

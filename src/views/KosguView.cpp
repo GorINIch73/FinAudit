@@ -39,12 +39,13 @@ void KosguView::RefreshData() {
 
 std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>>
 KosguView::GetDataAsStrings() {
-    std::vector<std::string> headers = {"ID", "Код", "Наименование",
+    std::vector<std::string> headers = {"ID", "КОСГУ", "КПС", "Наименование",
                                         "Примечание", "Сумма"};
     std::vector<std::vector<std::string>> rows;
     for (const auto &entry : m_filtered_kosgu_entries) {
-        rows.push_back({std::to_string(entry.id), entry.code, entry.name,
-                        entry.note, std::to_string(entry.total_amount)});
+        rows.push_back({std::to_string(entry.id), entry.code, entry.kps,
+                        entry.name, entry.note,
+                        std::to_string(entry.total_amount)});
     }
     return {headers, rows};
 }
@@ -57,7 +58,8 @@ bool KosguView::SaveChanges() {
     bool hasChanges = (selectedKosgu.id != -1) && (
         selectedKosgu.code != originalKosgu.code ||
         selectedKosgu.name != originalKosgu.name ||
-        selectedKosgu.note != originalKosgu.note
+        selectedKosgu.note != originalKosgu.note ||
+        selectedKosgu.kps != originalKosgu.kps
     );
 
     if (!hasChanges) {
@@ -106,7 +108,9 @@ void KosguView::UpdateFilteredKosgu() {
         for (const auto &entry : kosguEntries) {
             bool kosgu_match = false;
             if (strcasestr(entry.code.c_str(), filterText) != nullptr ||
-                strcasestr(entry.name.c_str(), filterText) != nullptr) {
+                strcasestr(entry.name.c_str(), filterText) != nullptr ||
+                strcasestr(entry.kps.c_str(), filterText) != nullptr ||
+                strcasestr(entry.note.c_str(), filterText) != nullptr) {
                 kosgu_match = true;
             }
 
@@ -207,9 +211,12 @@ static void SortKosgu(std::vector<Kosgu> &kosguEntries,
                           delta = a.code.compare(b.code);
                           break;
                       case 2:
-                          delta = a.name.compare(b.name);
+                          delta = a.kps.compare(b.kps);
                           break;
                       case 3:
+                          delta = a.name.compare(b.name);
+                          break;
+                      case 4:
                           delta = (a.total_amount < b.total_amount)   ? -1
                                   : (a.total_amount > b.total_amount) ? 1
                                                                       : 0;
@@ -345,7 +352,7 @@ void KosguView::Render() {
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_TRASH " Удалить")) {
             if (selectedKosguIndex != -1) {
-                kosgu_id_to_delete = kosguEntries[selectedKosguIndex].id;
+                kosgu_id_to_delete = m_filtered_kosgu_entries[selectedKosguIndex].id;
                 show_delete_popup = true;
             }
         }
@@ -357,22 +364,23 @@ void KosguView::Render() {
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_LIST " Отчет по расшифровкам")) {
             if (!isAdding && selectedKosguIndex != -1 && dbManager) {
-                std::string query = "SELECT k.code AS 'КОСГУ', p.date AS 'Дата', p.doc_number AS 'Номер док.', "
+                std::string query = "SELECT k.kps AS 'КПС', k.code AS 'КОСГУ', p.date AS 'Дата', p.doc_number AS 'Номер док.', "
                                     "pd.amount AS 'Сумма', p.description AS 'Назначение', c.name AS 'Контрагент' "
                                     "FROM PaymentDetails pd "
                                     "JOIN Payments p ON pd.payment_id = p.id "
                                     "JOIN KOSGU k ON pd.kosgu_id = k.id "
                                     "LEFT JOIN Counterparties c ON p.counterparty_id = c.id "
-                                    "WHERE pd.kosgu_id = " + std::to_string(kosguEntries[selectedKosguIndex].id) +
+                                    "WHERE pd.kosgu_id = " + std::to_string(m_filtered_kosgu_entries[selectedKosguIndex].id) +
                                     (filterText[0] != '\0' ? " AND (LOWER(p.date) LIKE LOWER('%" + std::string(filterText) + "%') "
                                     "OR LOWER(p.doc_number) LIKE LOWER('%" + std::string(filterText) + "%') "
                                     "OR LOWER(pd.amount) LIKE LOWER('%" + std::string(filterText) + "%') "
                                     "OR LOWER(p.description) LIKE LOWER('%" + std::string(filterText) + "%') "
                                     "OR LOWER(c.name) LIKE LOWER('%" + std::string(filterText) + "%') "
+                                    "OR LOWER(k.kps) LIKE LOWER('%" + std::string(filterText) + "%') "
                                     "OR LOWER(k.code) LIKE LOWER('%" + std::string(filterText) + "%'))" : "") +
                                     ";";
                 if (uiManager) {
-                    uiManager->CreateSpecialQueryView("Отчет по расшифровкам КОСГУ " + kosguEntries[selectedKosguIndex].code, query);
+                    uiManager->CreateSpecialQueryView("Отчет по расшифровкам КОСГУ " + m_filtered_kosgu_entries[selectedKosguIndex].code, query);
                 }
             }
         }
@@ -423,15 +431,16 @@ void KosguView::Render() {
 
         ImGui::BeginChild("KosguList", ImVec2(0, list_view_height), true,
                           ImGuiWindowFlags_HorizontalScrollbar);
-        if (ImGui::BeginTable("kosgu_table", 4,
+        if (ImGui::BeginTable("kosgu_table", 5,
                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                   ImGuiTableFlags_Resizable |
                                   ImGuiTableFlags_Sortable)) {
             ImGui::TableSetupColumn("ID", 0, 0.0f, 0);
-            ImGui::TableSetupColumn("Код", ImGuiTableColumnFlags_DefaultSort,
+            ImGui::TableSetupColumn("КОСГУ", ImGuiTableColumnFlags_DefaultSort,
                                     0.0f, 1);
-            ImGui::TableSetupColumn("Наименование", 0, 0.0f, 2);
-            ImGui::TableSetupColumn("Сумма", 0, 0.0f, 3);
+            ImGui::TableSetupColumn("КПС", 0, 0.0f, 2);
+            ImGui::TableSetupColumn("Наименование", 0, 0.0f, 3);
+            ImGui::TableSetupColumn("Сумма", 0, 0.0f, 4);
             ImGui::TableHeadersRow();
 
             if (ImGuiTableSortSpecs *sort_specs = ImGui::TableGetSortSpecs()) {
@@ -529,6 +538,8 @@ void KosguView::Render() {
                         ImGui::TableNextColumn();
                         ImGui::Text("%s", m_filtered_kosgu_entries[i].code.c_str());
                         ImGui::TableNextColumn();
+                        ImGui::Text("%s", m_filtered_kosgu_entries[i].kps.c_str());
+                        ImGui::TableNextColumn();
                         ImGui::Text("%s", m_filtered_kosgu_entries[i].name.c_str());
                         ImGui::TableNextColumn();
                         ImGui::Text("%.2f",
@@ -542,7 +553,9 @@ void KosguView::Render() {
 
         CustomWidgets::HorizontalSplitter("h_splitter", &list_view_height);
 
-        if ((selectedKosguIndex != -1 && selectedKosguIndex < (int)kosguEntries.size()) || isAdding) {
+        if ((selectedKosguIndex != -1 &&
+             selectedKosguIndex < (int)m_filtered_kosgu_entries.size()) ||
+            isAdding) {
             ImGui::BeginChild("KosguEditor", ImVec2(editor_width, 0), true);
 
             if (isAdding) {
@@ -552,14 +565,21 @@ void KosguView::Render() {
             }
             char codeBuf[256];
             char nameBuf[256];
+            char kpsBuf[256];
 
             snprintf(codeBuf, sizeof(codeBuf), "%s",
                      selectedKosgu.code.c_str());
             snprintf(nameBuf, sizeof(nameBuf), "%s",
                      selectedKosgu.name.c_str());
+            snprintf(kpsBuf, sizeof(kpsBuf), "%s",
+                     selectedKosgu.kps.c_str());
 
             if (ImGui::InputText("Код", codeBuf, sizeof(codeBuf))) {
                 selectedKosgu.code = codeBuf;
+                isDirty = true;
+            }
+            if (ImGui::InputText("КПС", kpsBuf, sizeof(kpsBuf))) {
+                selectedKosgu.kps = kpsBuf;
                 isDirty = true;
             }
             if (ImGui::InputText("Наименование", nameBuf, sizeof(nameBuf))) {
@@ -712,7 +732,12 @@ void KosguView::ApplyStoredSorting() {
                 switch (spec.column_index) {
                     case 0: delta = (a.id < b.id) ? -1 : (a.id > b.id) ? 1 : 0; break;
                     case 1: delta = a.code.compare(b.code); break;
-                    case 2: delta = a.name.compare(b.name); break;
+                    case 2: delta = a.kps.compare(b.kps); break;
+                    case 3: delta = a.name.compare(b.name); break;
+                    case 4:
+                        delta = (a.total_amount < b.total_amount) ? -1 :
+                                (a.total_amount > b.total_amount) ? 1 : 0;
+                        break;
                     default: break;
                 }
                 if (delta != 0) {

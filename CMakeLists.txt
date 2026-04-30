@@ -82,6 +82,7 @@ set(APP_SOURCES
     src/views/SuspiciousWordsView.cpp
     src/views/SpecialQueryView.cpp
     src/views/ContractRegistryNumbersView.cpp
+    src/views/ExpenseStructureView.cpp
 )
 
 set_source_files_properties(src/pdfgen.c PROPERTIES LANGUAGE C)

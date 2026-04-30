@@ -27,6 +27,7 @@
 #include "views/SuspiciousWordsView.h"
 #include "views/SpecialQueryView.h"
 #include "views/ContractRegistryNumbersView.h"
+#include "views/ExpenseStructureView.h"
 
 struct GLFWwindow;
 class ImportManager;
@@ -108,9 +109,12 @@ public:
 private:
     void LoadRecentDbPaths();
     void SaveRecentDbPaths();
+    void LoadFonts();
 
     DatabaseManager* dbManager;
     PdfReporter* pdfReporter;
     GLFWwindow* window;
     int viewIdCounter = 0;
+    int appliedFontSize = 0;
+    bool fontsLoaded = false;
 };
