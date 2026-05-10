@@ -334,8 +334,21 @@ void DatabaseManager::checkAndUpdateDatabaseSchema() {
             "name TEXT NOT NULL UNIQUE,"
             "pattern TEXT NOT NULL);");
     execute("INSERT OR IGNORE INTO Regexes (name, pattern) VALUES "
-            "('Контракты', '(?:по контракту|по контр|Контракт|дог\\.|К-т)(?: "
-            "№)?\\s*([^\\s,]+)\\s*(?:от\\s*)?(\\d{2}\\.\\d{2}\\.(?:\\d{4}|\\d{2}))');");
+            "('Контракты', '(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
+            "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|К-т)\\s*(?:N|№)?\\s*"
+            "([^\\s,;]+)\\s*(?:от\\s*)?"
+            "(\\d{1,2}[.\\/-]\\d{1,2}[.\\/-](?:\\d{4}|\\d{2})|"
+            "\\d{4}[.\\/-]\\d{1,2}[.\\/-]\\d{1,2})');");
+    execute("UPDATE Regexes SET pattern = "
+            "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
+            "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|К-т)\\s*(?:N|№)?\\s*"
+            "([^\\s,;]+)\\s*(?:от\\s*)?"
+            "(\\d{1,2}[.\\/-]\\d{1,2}[.\\/-](?:\\d{4}|\\d{2})|"
+            "\\d{4}[.\\/-]\\d{1,2}[.\\/-]\\d{1,2})' "
+            "WHERE name = 'Контракты' AND pattern = "
+            "'(?:по контракту|по контр|Контракт|дог\\.|К-т)(?: "
+            "№)?\\s*([^\\s,]+)\\s*(?:от\\s*)?"
+            "(\\d{2}\\.\\d{2}\\.(?:\\d{4}|\\d{2}))';");
     execute("INSERT OR IGNORE INTO Regexes (name, pattern) VALUES "
             "('КОСГУ', 'К(\\d{3})');");
 
@@ -863,8 +876,11 @@ bool DatabaseManager::createDatabase(const std::string &filepath) {
 
     std::vector<std::string> default_regexes = {
         "INSERT OR IGNORE INTO Regexes (name, pattern) VALUES ('Контракты', "
-        "'(?:по контракту|по контр|Контракт|дог\\.|К-т)(?: "
-        "№)?\\s*([^\\s,]+)\\s*(?:от\\s*)?(\\d{2}\\.\\d{2}\\.(?:\\d{4}|\\d{2}))'"
+        "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
+        "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|К-т)\\s*(?:N|№)?\\s*"
+        "([^\\s,;]+)\\s*(?:от\\s*)?"
+        "(\\d{1,2}[.\\/-]\\d{1,2}[.\\/-](?:\\d{4}|\\d{2})|"
+        "\\d{4}[.\\/-]\\d{1,2}[.\\/-]\\d{1,2})'"
         ");",
         "INSERT OR IGNORE INTO Regexes (name, pattern) VALUES ('КОСГУ', "
         "'К(\\d{3})');"};
@@ -874,6 +890,20 @@ bool DatabaseManager::createDatabase(const std::string &filepath) {
             close();
             return false;
         }
+    }
+
+    if (!execute("UPDATE Regexes SET pattern = "
+                 "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
+                 "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|К-т)\\s*(?:N|№)?\\s*"
+                 "([^\\s,;]+)\\s*(?:от\\s*)?"
+                 "(\\d{1,2}[.\\/-]\\d{1,2}[.\\/-](?:\\d{4}|\\d{2})|"
+                 "\\d{4}[.\\/-]\\d{1,2}[.\\/-]\\d{1,2})' "
+                 "WHERE name = 'Контракты' AND pattern = "
+                 "'(?:по контракту|по контр|Контракт|дог\\.|К-т)(?: "
+                 "№)?\\s*([^\\s,]+)\\s*(?:от\\s*)?"
+                 "(\\d{2}\\.\\d{2}\\.(?:\\d{4}|\\d{2}))';")) {
+        close();
+        return false;
     }
 
     checkAndUpdateDatabaseSchema();
@@ -3066,6 +3096,13 @@ bool DatabaseManager::updateSettings(const Settings &settings) {
 bool DatabaseManager::backupTo(const std::string &backupFilepath) {
     if (!db) {
         return false;
+    }
+
+    int checkpoint_rc = sqlite3_wal_checkpoint_v2(
+        db, nullptr, SQLITE_CHECKPOINT_FULL, nullptr, nullptr);
+    if (checkpoint_rc != SQLITE_OK) {
+        std::cerr << "WAL checkpoint before backup failed: "
+                  << sqlite3_errmsg(db) << std::endl;
     }
 
     sqlite3 *pBackupDb = nullptr;

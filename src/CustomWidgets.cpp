@@ -1,4 +1,5 @@
 #include "CustomWidgets.h"
+#include "PlatformUtils.h"
 #include "imgui.h"
 #include "imgui_internal.h" // For ImTextCharFromUtf8
 #include <algorithm> // For std::remove_if, std::find_if, std::sort, std::clamp, std::replace
@@ -8,7 +9,6 @@
 #include <functional> // For std::function
 #include <stdexcept>  // For std::invalid_argument, std::out_of_range
 #include <string>     // For std::string, std::to_string
-#include <strings.h>  // For strcasestr, strcasecmp (POSIX specific)
 #include <vector>     // For std::vector
 
 #include <iostream>

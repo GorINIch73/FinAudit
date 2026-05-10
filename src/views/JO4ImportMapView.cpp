@@ -1,6 +1,7 @@
 #include "JO4ImportMapView.h"
 #include "../CustomWidgets.h"
 #include "../IconsFontAwesome6.h"
+#include "../PlatformUtils.h"
 #include "../UIManager.h"
 #include <algorithm>
 #include <cctype>
@@ -159,7 +160,8 @@ void JO4ImportMapView::ReadPreviewData() {
     if (importFilePath.empty())
         return;
 
-    std::ifstream file(importFilePath);
+    std::ifstream file;
+    platformOpenInputFile(file, importFilePath);
     if (!file.is_open()) {
         std::cerr << "ERROR: Could not open file: " << importFilePath << std::endl;
         return;

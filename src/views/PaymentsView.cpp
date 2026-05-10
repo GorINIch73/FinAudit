@@ -2,6 +2,7 @@
 #include "../Contract.h"
 #include "../IconsFontAwesome6.h"
 #include "../BasePaymentDocument.h"
+#include "../PlatformUtils.h"
 #include "../UIManager.h"
 #include "CustomWidgets.h"
 #include <algorithm> // для std::sort
@@ -124,6 +125,61 @@ static std::string normalize_payment_reference_date(const std::string &value) {
     return buffer;
 }
 
+static std::string normalize_contract_date_for_bank_dialog(
+    const std::string &value) {
+    size_t first = value.find_first_not_of(" \n\r\t");
+    if (first == std::string::npos) {
+        return "";
+    }
+    size_t last = value.find_last_not_of(" \n\r\t");
+    std::string date = value.substr(first, last - first + 1);
+
+    size_t time_separator = date.find_first_of(" T;");
+    if (time_separator != std::string::npos) {
+        date = date.substr(0, time_separator);
+    }
+
+    std::smatch match;
+    try {
+        std::regex ymd_regex("^(\\d{4})[./-](\\d{1,2})[./-](\\d{1,2})$");
+        if (std::regex_match(date, match, ymd_regex) && match.size() == 4) {
+            int year = std::stoi(match[1].str());
+            int month = std::stoi(match[2].str());
+            int day = std::stoi(match[3].str());
+            if (year >= 1900 && year <= 2100 && month >= 1 &&
+                month <= 12 && day >= 1 && day <= 31) {
+                char buffer[11];
+                snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d", year,
+                         month, day);
+                return buffer;
+            }
+        }
+
+        std::regex dmy_regex("^(\\d{1,2})[./-](\\d{1,2})[./-](\\d{2,4})$");
+        if (std::regex_match(date, match, dmy_regex) && match.size() == 4) {
+            int day = std::stoi(match[1].str());
+            int month = std::stoi(match[2].str());
+            int year = std::stoi(match[3].str());
+            if (year < 100) {
+                year += 2000;
+            }
+            if (year >= 1900 && year <= 2100 && month >= 1 &&
+                month <= 12 && day >= 1 && day <= 31) {
+                char buffer[11];
+                snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d", year,
+                         month, day);
+                return buffer;
+            }
+        }
+    } catch (const std::regex_error &) {
+        return date;
+    } catch (const std::exception &) {
+        return date;
+    }
+
+    return date;
+}
+
 static std::vector<PaymentDocumentReference> extract_payment_document_references(
     const std::string &text) {
     std::map<std::string, PaymentDocumentReference> refs;
@@ -211,10 +267,8 @@ PaymentsView::PaymentsView()
     memset(counterpartyFilter, 0, sizeof(counterpartyFilter));
     memset(kosguFilter, 0, sizeof(kosguFilter));
     memset(contractFilter, 0, sizeof(contractFilter));
-    memset(invoiceFilter, 0, sizeof(invoiceFilter));
     memset(groupKosguFilter, 0, sizeof(groupKosguFilter));
     memset(groupContractFilter, 0, sizeof(groupContractFilter));
-    memset(groupInvoiceFilter, 0, sizeof(groupInvoiceFilter));
 }
 
 void PaymentsView::SetUIManager(UIManager *manager) { uiManager = manager; }
@@ -279,6 +333,7 @@ bool PaymentsView::SaveChanges() {
         return true;
 
     if (dbManager && selectedPayment.id != -1) {
+        selectedPayment.recipient = recipientBuffer;
         selectedPayment.description = descriptionBuffer;
         selectedPayment.note = noteBuffer;
         if (!dbManager->updatePayment(selectedPayment)) {
@@ -291,14 +346,21 @@ bool PaymentsView::SaveChanges() {
         UpdateFilteredPayments();
         ApplyStoredSorting();
         // Находим обновлённую запись
+        bool foundSelectedPayment = false;
         for (int i = 0; i < (int)m_filtered_payments.size(); i++) {
             if (m_filtered_payments[i].id == selectedPayment.id) {
                 selectedPaymentIndex = i;
                 selectedPayment = m_filtered_payments[i];
+                foundSelectedPayment = true;
                 break;
             }
         }
+        if (!foundSelectedPayment) {
+            ClearPaymentSelection();
+            return true;
+        }
         originalPayment = selectedPayment;
+        recipientBuffer = selectedPayment.recipient;
         descriptionBuffer = selectedPayment.description;
         noteBuffer = selectedPayment.note;
     } else {
@@ -329,6 +391,79 @@ bool PaymentsView::SaveDetailChanges() {
 
     isDetailDirty = false;
     return true;
+}
+
+void PaymentsView::ClearPaymentSelection() {
+    selectedPayment = Payment{};
+    originalPayment = Payment{};
+    selectedPaymentIndex = -1;
+    recipientBuffer.clear();
+    descriptionBuffer.clear();
+    noteBuffer.clear();
+    paymentDetails.clear();
+    selectedDetail = PaymentDetail{};
+    originalDetail = PaymentDetail{};
+    selectedDetailIndex = -1;
+    selectedJo4DocumentId = -1;
+    isAdding = false;
+    isDirty = false;
+    isAddingDetail = false;
+    isDetailDirty = false;
+    InvalidateJo4Cache();
+}
+
+void PaymentsView::SelectPaymentAtFilteredIndex(int index) {
+    if (index < 0 || index >= static_cast<int>(m_filtered_payments.size())) {
+        ClearPaymentSelection();
+        return;
+    }
+
+    selectedPaymentIndex = index;
+    selectedPayment = m_filtered_payments[index];
+    originalPayment = selectedPayment;
+    recipientBuffer = selectedPayment.recipient;
+    descriptionBuffer = selectedPayment.description;
+    noteBuffer = selectedPayment.note;
+    paymentDetails = dbManager ? dbManager->getPaymentDetails(selectedPayment.id)
+                               : std::vector<PaymentDetail>();
+    selectedDetail = PaymentDetail{};
+    originalDetail = PaymentDetail{};
+    selectedDetailIndex = -1;
+    selectedJo4DocumentId = -1;
+    isAdding = false;
+    isDirty = false;
+    isAddingDetail = false;
+    isDetailDirty = false;
+    InvalidateJo4Cache();
+}
+
+void PaymentsView::ReconcileSelectionAfterFilter() {
+    if (selectedPayment.id <= 0) {
+        selectedPaymentIndex = -1;
+        paymentDetails.clear();
+        selectedDetailIndex = -1;
+        return;
+    }
+
+    for (int i = 0; i < static_cast<int>(m_filtered_payments.size()); ++i) {
+        if (m_filtered_payments[i].id == selectedPayment.id) {
+            selectedPaymentIndex = i;
+            selectedPayment = m_filtered_payments[i];
+            originalPayment = selectedPayment;
+            recipientBuffer = selectedPayment.recipient;
+            descriptionBuffer = selectedPayment.description;
+            noteBuffer = selectedPayment.note;
+            paymentDetails =
+                dbManager ? dbManager->getPaymentDetails(selectedPayment.id)
+                          : std::vector<PaymentDetail>();
+            selectedDetailIndex = -1;
+            selectedJo4DocumentId = -1;
+            InvalidateJo4Cache();
+            return;
+        }
+    }
+
+    ClearPaymentSelection();
 }
 
 void PaymentsView::SortPayments(const ImGuiTableSortSpecs *sort_specs) {
@@ -515,19 +650,13 @@ void PaymentsView::Render() {
                 }
             }
             if (selectedPaymentIndex != -1) {
-                selectedPayment = m_filtered_payments[selectedPaymentIndex];
-                originalPayment = selectedPayment;
+                SelectPaymentAtFilteredIndex(selectedPaymentIndex);
             }
-            descriptionBuffer = selectedPayment.description;
-            noteBuffer = selectedPayment.note;
-            paymentDetails = dbManager ? dbManager->getPaymentDetails(new_id > 0 ? new_id : selectedPayment.id) : std::vector<PaymentDetail>();
-            isAdding = false;
-            isDirty = false;
         }
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_TRASH " Удалить")) {
-            if (selectedPaymentIndex != -1) {
-                payment_id_to_delete = payments[selectedPaymentIndex].id;
+            if (selectedPayment.id > 0) {
+                payment_id_to_delete = selectedPayment.id;
                 show_delete_payment_popup = true;
             }
         }
@@ -619,7 +748,9 @@ void PaymentsView::Render() {
                 RefreshData();
                 selectedPayment = Payment{};
                 originalPayment = Payment{};
+                recipientBuffer.clear();
                 descriptionBuffer.clear();
+                noteBuffer.clear();
                 paymentDetails.clear();
                 isDirty = false;
             }
@@ -656,8 +787,11 @@ void PaymentsView::Render() {
         ImGui::PushItemWidth(avail_width - ImGui::GetStyle().ItemSpacing.x);
         const char *filter_items[] = {
             "Все",           "Без КОСГУ",       "Без Договора",
-            "Без Накладной", "Без расшифровок", "Подозрительные слова",
+            "Без расшифровок", "Подозрительные слова",
             "Поступления",   "С примечанием"};
+        if (missing_info_filter_index >= IM_ARRAYSIZE(filter_items)) {
+            missing_info_filter_index = 0;
+        }
         if (ImGui::Combo("Фильтр по расшифровкам", &missing_info_filter_index,
                          filter_items, IM_ARRAYSIZE(filter_items))) {
             filter_changed = true;
@@ -666,7 +800,9 @@ void PaymentsView::Render() {
 
         if (filter_changed) {
             SaveChanges();
+            SaveDetailChanges();
             UpdateFilteredPayments();
+            ReconcileSelectionAfterFilter();
         }
 
         if (ImGui::CollapsingHeader("Групповые операции")) {
@@ -686,13 +822,10 @@ void PaymentsView::Render() {
                     replacement_target = 0;
                     replacement_kosgu_id = -1;
                     replacement_contract_id = -1;
-                    replacement_base_document_id = -1;
                     memset(replacement_kosgu_filter, 0,
                            sizeof(replacement_kosgu_filter));
                     memset(replacement_contract_filter, 0,
                            sizeof(replacement_contract_filter));
-                    memset(replacement_invoice_filter, 0,
-                           sizeof(replacement_invoice_filter));
                 }
             }
             ImGui::SameLine();
@@ -853,10 +986,8 @@ void PaymentsView::Render() {
                     int new_id = -1;
                     if (replacement_target == 0)
                         new_id = replacement_kosgu_id;
-                    else if (replacement_target == 1)
-                        new_id = replacement_contract_id;
                     else
-                        new_id = replacement_base_document_id;
+                        new_id = replacement_contract_id;
 
                     if (new_id != -1) {
                         StartGroupOperation(REPLACE);
@@ -941,31 +1072,16 @@ void PaymentsView::Render() {
                         }
                     }
 
-                    bool is_selected = (selectedPaymentIndex == i);
+                    bool is_selected = (selectedPayment.id == payment.id);
                     char label[128];
                     sprintf(label, "%s##%d", payment.date.c_str(), payment.id);
                     if (ImGui::Selectable(
                             label, is_selected,
                             ImGuiSelectableFlags_SpanAllColumns)) {
-                        if (selectedPaymentIndex != i) {
+                        if (selectedPayment.id != payment.id) {
                             SaveChanges();
                             SaveDetailChanges();
-                            selectedPaymentIndex = i;
-                            selectedPayment = m_filtered_payments[i];
-                            originalPayment = m_filtered_payments[i];
-                            descriptionBuffer = selectedPayment.description;
-                            noteBuffer = selectedPayment.note;
-                            if (dbManager) {
-                                paymentDetails =
-                                    dbManager->getPaymentDetails(
-                                        selectedPayment.id);
-                            }
-                            isAdding = false;
-                            isDirty = false;
-                            selectedDetailIndex = -1;
-                            selectedJo4DocumentId = -1;
-                            InvalidateJo4Cache();
-                            isDetailDirty = false;
+                            SelectPaymentAtFilteredIndex(i);
                             need_to_break = true;
                         }
                     }
@@ -1015,9 +1131,7 @@ void PaymentsView::Render() {
         ImGui::BeginChild("Editors", ImVec2(0, 0), false);
 
         ImGui::BeginChild("PaymentEditor", ImVec2(editor_width, 0), true);
-        if ((selectedPaymentIndex != -1 &&
-             selectedPaymentIndex < (int)payments.size()) ||
-            isAdding) {
+        if (selectedPayment.id > 0 || isAdding) {
             if (isAdding) {
                 ImGui::Text("Добавление нового платежа");
             } else {
@@ -1053,12 +1167,9 @@ void PaymentsView::Render() {
                 isDirty = true;
             }
 
-            char recipientBuf[256];
-            snprintf(recipientBuf, sizeof(recipientBuf), "%s",
-                     selectedPayment.recipient.c_str());
-            if (ImGui::InputText("Получатель", recipientBuf,
-                                 sizeof(recipientBuf))) {
-                selectedPayment.recipient = recipientBuf;
+            if (CustomWidgets::InputTextMultilineWithWrap(
+                    "Получатель", &recipientBuffer,
+                    ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 2))) {
                 isDirty = true;
             }
 
@@ -1074,7 +1185,7 @@ void PaymentsView::Render() {
                 isDirty = true;
             }
 
-            ImGui::BeginDisabled(selectedPaymentIndex == -1);
+            ImGui::BeginDisabled(selectedPayment.id <= 0);
             if (ImGui::Button("Создать из назначения...")) {
                 show_create_from_desc_popup = true;
                 entity_to_create = 0; // Reset to contract
@@ -1124,6 +1235,9 @@ void PaymentsView::Render() {
                                 extracted_date.erase(
                                     0, extracted_date.find_first_not_of(
                                            " \n\r\t"));
+                                extracted_date =
+                                    normalize_contract_date_for_bank_dialog(
+                                        extracted_date);
 
                                 if (entity_to_create == 0) {
                                     existing_entity_id =
@@ -1222,8 +1336,10 @@ void PaymentsView::Render() {
                 // При ручном изменении проверяем существование договора
                 if (dbManager && !extracted_number.empty() && !extracted_date.empty() &&
                     extracted_number != "Не найдено" && extracted_number != "Ошибка Regex") {
+                    std::string date_for_lookup =
+                        normalize_contract_date_for_bank_dialog(extracted_date);
                     existing_entity_id = dbManager->getContractIdByNumberDate(
-                        extracted_number, extracted_date);
+                        extracted_number, date_for_lookup);
                 }
 
                 if (existing_entity_id != -1) {
@@ -1237,6 +1353,9 @@ void PaymentsView::Render() {
                     extracted_number != "Не найдено" &&
                     extracted_number != "Ошибка Regex") {
                     if (dbManager && entity_to_create == 0) {
+                        extracted_date =
+                            normalize_contract_date_for_bank_dialog(
+                                extracted_date);
                         Contract new_contract = {
                             -1, extracted_number, extracted_date,
                             selectedPayment.counterparty_id, 0.0};
@@ -1297,7 +1416,7 @@ void PaymentsView::Render() {
 
         ImGui::Text("Расшифровки: ");
 
-        if (selectedPaymentIndex != -1) {
+        if (selectedPayment.id > 0) {
             double details_sum = 0.0;
             for (const auto &detail : paymentDetails) {
                 details_sum += detail.amount;
@@ -1358,14 +1477,13 @@ void PaymentsView::Render() {
                 "PaymentDetailsList",
                 ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 4), true,
                 ImGuiWindowFlags_HorizontalScrollbar);
-            if (ImGui::BeginTable("payment_details_table", 4,
+            if (ImGui::BeginTable("payment_details_table", 3,
                                   ImGuiTableFlags_Borders |
                                       ImGuiTableFlags_RowBg |
                                       ImGuiTableFlags_Resizable)) {
                 ImGui::TableSetupColumn("Сумма");
                 ImGui::TableSetupColumn("КОСГУ");
                 ImGui::TableSetupColumn("Договор");
-                ImGui::TableSetupColumn("Накладная");
                 ImGui::TableHeadersRow();
 
                 bool need_to_break = false;
@@ -1444,15 +1562,6 @@ void PaymentsView::Render() {
                         }
                         ImGui::Text("%s", contractNumber);
 
-                        ImGui::TableNextColumn();
-                        const char *docNumber = "N/A";
-                        for (const auto &doc : baseDocsForDropdown) {
-                            if (doc.id == paymentDetails[i].base_document_id) {
-                                docNumber = doc.number.c_str();
-                                break;
-                            }
-                        }
-                        ImGui::Text("%s", docNumber);
                     }
                 }
                 ImGui::EndTable();
@@ -1497,20 +1606,6 @@ void PaymentsView::Render() {
                     isDetailDirty = true;
                 }
 
-                // Dropdown for Invoice
-                std::vector<CustomWidgets::ComboItem> docItems;
-                docItems.push_back({-1, "Не выбрано"});
-                for (const auto &d : baseDocsForDropdown) {
-                    std::string display = d.number + "  " + d.date;
-                    if (!d.document_name.empty()) display += " (" + d.document_name + ")";
-                    docItems.push_back({d.id, display});
-                }
-                if (CustomWidgets::ComboWithFilter("Документ Основания##detail",
-                                                   selectedDetail.base_document_id,
-                                                   docItems, invoiceFilter,
-                                                   sizeof(invoiceFilter), 0)) {
-                    isDetailDirty = true;
-                }
             }
 
             ImGui::Separator();
@@ -1607,7 +1702,7 @@ void PaymentsView::UpdateFilteredPayments() {
     m_filtered_payments.clear();
     if (missing_info_filter_index == 0) {
         m_filtered_payments = text_filtered_payments;
-    } else if (missing_info_filter_index == 5) { // "Подозрительные слова"
+    } else if (missing_info_filter_index == 4) { // "Подозрительные слова"
         if (!suspiciousWordsForFilter.empty()) {
             for (const auto &p : text_filtered_payments) {
                 bool suspicious_found = false;
@@ -1623,13 +1718,13 @@ void PaymentsView::UpdateFilteredPayments() {
                 }
             }
         }
-    } else if (missing_info_filter_index == 6) { // "Поступления"
+    } else if (missing_info_filter_index == 5) { // "Поступления"
         for (const auto &p : text_filtered_payments) {
             if (p.type) { // If payment type is true (receipt)
                 m_filtered_payments.push_back(p);
             }
         }
-    } else if (missing_info_filter_index == 7) { // "С примечанием"
+    } else if (missing_info_filter_index == 6) { // "С примечанием"
         for (const auto &p : text_filtered_payments) {
             if (!p.note.empty()) {
                 m_filtered_payments.push_back(p);
@@ -1639,11 +1734,11 @@ void PaymentsView::UpdateFilteredPayments() {
         for (const auto &p : text_filtered_payments) {
             auto it = details_by_payment.find(p.id);
 
-            if (missing_info_filter_index == 4) {     // "Без расшифровок"
+            if (missing_info_filter_index == 3) {     // "Без расшифровок"
                 if (it == details_by_payment.end()) { // has no details
                     m_filtered_payments.push_back(p);
                 }
-            } else { // Filters for missing info inside details (index 1, 2, 3)
+            } else { // Filters for missing info inside details (index 1, 2)
                 if (it != details_by_payment.end()) {     // has details
                     if (missing_info_filter_index == 2) { // "Без Договора"
                         bool has_detail_without_contract = false;
@@ -1673,13 +1768,10 @@ void PaymentsView::UpdateFilteredPayments() {
                                 m_filtered_payments.push_back(p);
                             }
                         }
-                    } else { // Handle other missing info filters
+                    } else if (missing_info_filter_index == 1) {
                         bool missing_found = false;
                         for (const auto &detail : it->second) {
-                            if ((missing_info_filter_index == 1 &&
-                                 detail.kosgu_id == -1) ||
-                                (missing_info_filter_index == 3 &&
-                                 detail.base_document_id == -1)) {
+                            if (detail.kosgu_id == -1) {
                                 missing_found = true;
                                 break;
                             }
@@ -2276,6 +2368,7 @@ void PaymentsView::ProcessGroupOperation() {
                                          number.find_first_not_of(" \n\r\t"));
                             date.erase(date.find_last_not_of(" \n\r\t") + 1);
                             date.erase(0, date.find_first_not_of(" \n\r\t"));
+                            date = normalize_contract_date_for_bank_dialog(date);
 
                             int id_to_set = -1;
                             id_to_set =
@@ -2339,7 +2432,7 @@ void PaymentsView::ProcessGroupOperation() {
         items_to_process.clear();
 
         // Refresh details of currently selected payment if any
-        if (selectedPaymentIndex != -1) {
+        if (selectedPayment.id > 0) {
             paymentDetails = dbManager->getPaymentDetails(selectedPayment.id);
         }
     }

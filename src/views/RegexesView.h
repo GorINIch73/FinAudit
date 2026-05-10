@@ -17,6 +17,8 @@ public:
 private:
     void RefreshData();
     void SaveChanges();
+    void ClearRegexSelection();
+    void ReconcileSelectionAfterFilter();
 
     std::vector<Regex> regexes;
     Regex selectedRegex;

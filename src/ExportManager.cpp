@@ -1,4 +1,5 @@
 #include "ExportManager.h"
+#include "PlatformUtils.h"
 #include <fstream>
 #include <iostream>
 
@@ -29,7 +30,8 @@ int ExportManager::ExportContractsForChecking(const std::string& filepath) {
 
     std::vector<ContractExportData> contracts = dbManager->getContractsForExport();
 
-    std::ofstream file(filepath);
+    std::ofstream file;
+    platformOpenOutputFile(file, filepath);
     if (!file.is_open()) {
         std::cerr << "Failed to open file for writing: " << filepath << std::endl;
         return 0;

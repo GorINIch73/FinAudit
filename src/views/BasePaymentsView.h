@@ -27,6 +27,9 @@ private:
     void RefreshData();
     void RefreshDropdownData();
     bool SaveChanges();
+    void ClearDocumentSelection();
+    void SelectDocumentAtFilteredIndex(int index);
+    void ReconcileSelectionAfterFilter();
 
     std::vector<BasePaymentDocument> documents;
     BasePaymentDocument selectedDoc;

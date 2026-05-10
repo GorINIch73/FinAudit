@@ -34,6 +34,7 @@ void BasePaymentsView::RefreshData() {
     if (dbManager) {
         documents = dbManager->getBasePaymentDocuments();
         UpdateFilteredDocuments();
+        ReconcileSelectionAfterFilter();
     }
 }
 
@@ -164,6 +165,52 @@ void BasePaymentsView::UpdateFilteredDocuments() {
             m_filtered_documents.push_back(doc);
         }
     }
+}
+
+void BasePaymentsView::ClearDocumentSelection() {
+    selectedDoc = BasePaymentDocument{};
+    originalDoc = BasePaymentDocument{};
+    selectedDocIndex = -1;
+    docDetails.clear();
+    selectedDetail = BasePaymentDocumentDetail{};
+    isAdding = false;
+    isDirty = false;
+    isDetailDirty = false;
+}
+
+void BasePaymentsView::SelectDocumentAtFilteredIndex(int index) {
+    if (index < 0 || index >= static_cast<int>(m_filtered_documents.size())) {
+        ClearDocumentSelection();
+        return;
+    }
+
+    selectedDocIndex = index;
+    selectedDoc = m_filtered_documents[index];
+    originalDoc = selectedDoc;
+    docDetails =
+        dbManager ? dbManager->getBasePaymentDocumentDetails(selectedDoc.id)
+                  : std::vector<BasePaymentDocumentDetail>();
+    selectedDetail = BasePaymentDocumentDetail{};
+    isAdding = false;
+    isDirty = false;
+    isDetailDirty = false;
+}
+
+void BasePaymentsView::ReconcileSelectionAfterFilter() {
+    if (selectedDoc.id <= 0) {
+        selectedDocIndex = -1;
+        docDetails.clear();
+        return;
+    }
+
+    for (int i = 0; i < static_cast<int>(m_filtered_documents.size()); ++i) {
+        if (m_filtered_documents[i].id == selectedDoc.id) {
+            SelectDocumentAtFilteredIndex(i);
+            return;
+        }
+    }
+
+    ClearDocumentSelection();
 }
 
 void BasePaymentsView::SortDocuments(const ImGuiTableSortSpecs* sort_specs) {
@@ -298,6 +345,7 @@ void BasePaymentsView::Render() {
                          sizeof(doc_search_buffer))) {
         strncpy(filterText, doc_search_buffer, sizeof(filterText) - 1);
         UpdateFilteredDocuments();
+        ReconcileSelectionAfterFilter();
     }
     ImGui::SameLine();
     if (doc_search_buffer[0] != '\0') {
@@ -305,6 +353,7 @@ void BasePaymentsView::Render() {
             memset(doc_search_buffer, 0, sizeof(doc_search_buffer));
             memset(filterText, 0, sizeof(filterText));
             UpdateFilteredDocuments();
+            ReconcileSelectionAfterFilter();
         }
     }
     ImGui::SameLine();
@@ -313,6 +362,7 @@ void BasePaymentsView::Render() {
     if (ImGui::Combo("##DocFilter", &doc_filter_index, filter_items,
                      IM_ARRAYSIZE(filter_items))) {
         UpdateFilteredDocuments();
+        ReconcileSelectionAfterFilter();
     }
 
     // --- Групповые операции ---
@@ -447,16 +497,12 @@ void BasePaymentsView::Render() {
             ImGui::Text("%s", doc.date.c_str());
             ImGui::TableNextColumn();
             if (ImGui::Selectable(doc.number.c_str(),
-                                  row == selectedDocIndex,
+                                  doc.id == selectedDoc.id,
                                   ImGuiSelectableFlags_SpanAllColumns)) {
-                SaveChanges();
-                selectedDocIndex = row;
-                selectedDoc = doc;
-                originalDoc = doc;
-                docDetails =
-                    dbManager
-                        ? dbManager->getBasePaymentDocumentDetails(doc.id)
-                        : std::vector<BasePaymentDocumentDetail>();
+                if (selectedDoc.id != doc.id) {
+                    SaveChanges();
+                    SelectDocumentAtFilteredIndex(row);
+                }
             }
             ImGui::TableNextColumn();
             ImGui::Text("%s", doc.document_name.c_str());
@@ -532,8 +578,7 @@ void BasePaymentsView::Render() {
     CustomWidgets::HorizontalSplitter("h_splitter_bpd", &split_pos, 100.0f);
 
     // --- Редактор и расшифровки (нижняя часть) ---
-    if (selectedDocIndex >= 0 &&
-        selectedDocIndex < m_filtered_documents.size()) {
+    if (selectedDoc.id > 0) {
         ImGui::BeginChild("EditorRegion", ImVec2(0, 0), true);
 
         // Левая часть - редактор

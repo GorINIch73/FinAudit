@@ -32,10 +32,32 @@ if(NOT imgui_POPULATED)
 endif()
 
 # 2. Поиск системных библиотек
-find_package(glfw3 3.3 REQUIRED)
+if(WIN32)
+  FetchContent_Declare(
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG 3.4
+  )
+  set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(glfw)
+
+  FetchContent_Declare(
+    sqlite3
+    URL https://www.sqlite.org/2024/sqlite-amalgamation-3450300.zip
+  )
+  FetchContent_MakeAvailable(sqlite3)
+  add_library(sqlite3 STATIC ${sqlite3_SOURCE_DIR}/sqlite3.c)
+  target_include_directories(sqlite3 PUBLIC ${sqlite3_SOURCE_DIR})
+  add_library(SQLite::SQLite3 ALIAS sqlite3)
+else()
+  find_package(glfw3 3.3 REQUIRED)
+  find_package(SQLite3 REQUIRED)
+  find_package(X11 REQUIRED)
+endif()
 find_package(OpenGL REQUIRED)
-find_package(SQLite3 REQUIRED)
-find_package(X11 REQUIRED)
 
 # --- Исходные файлы ---
 
@@ -56,6 +78,8 @@ target_include_directories(imgui_lib PUBLIC
     ${imgui_SOURCE_DIR}/backends
     ${imgui_SOURCE_DIR}/misc/cpp
 )
+
+target_link_libraries(imgui_lib PUBLIC glfw)
 
 set(APP_SOURCES
     src/main.cpp
@@ -99,13 +123,28 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${imgui_SOURCE_DIR}/backends
 )
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE USE_STD_FILESYSTEM)
+
 # Подключаем все необходимые библиотеки к исполняемому файлу
 target_link_libraries(${PROJECT_NAME} PRIVATE
     glfw
     OpenGL::GL
     SQLite::SQLite3
-    X11::X11
     imgui_lib
+)
+
+if(UNIX AND NOT APPLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE X11::X11)
+endif()
+
+if(WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE shell32)
+endif()
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/data
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/data
 )
 
 # --- Установка ---
@@ -137,5 +176,9 @@ install(FILES FnAudit.desktop
 )
 
 # Передаём путь к данным в C++ код через макрос препроцессора
-set(INSTALL_DATA_DIR_DEFINE "INSTALL_DATA_DIR=\"/usr/local/share/FinancialAudit\"")
+if(WIN32)
+  set(INSTALL_DATA_DIR_DEFINE "INSTALL_DATA_DIR=\"data\"")
+else()
+  set(INSTALL_DATA_DIR_DEFINE "INSTALL_DATA_DIR=\"${CMAKE_INSTALL_FULL_DATADIR}/${PROJECT_NAME}\"")
+endif()
 target_compile_definitions(${PROJECT_NAME} PRIVATE ${INSTALL_DATA_DIR_DEFINE})

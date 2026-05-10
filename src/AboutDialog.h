@@ -1,6 +1,7 @@
 #pragma once
 
 #include "IconsFontAwesome6.h"
+#include "PlatformUtils.h"
 #include "imgui.h"
 #include <string>
 
@@ -75,8 +76,7 @@ class AboutDialog {
                 ImGui::SameLine();
                 if (ImGui::Button(ICON_FA_ENVELOPE " gGorINIch@gmail.com")) {
                     // Попытка открыть почтовый клиент
-                    const char *command = "xdg-open mailto:gGorINIch@gmail.com";
-                    system(command);
+                    platformOpenOrLog("mailto:gGorINIch@gmail.com", "mail link");
                 }
                 ImGui::Spacing();
 

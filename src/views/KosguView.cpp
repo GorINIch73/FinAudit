@@ -1,6 +1,7 @@
 #include "KosguView.h"
 #include "../CustomWidgets.h"
 #include "../IconsFontAwesome6.h"
+#include "../PlatformUtils.h"
 #include "../UIManager.h"
 #include <algorithm>
 #include <cstring>
@@ -32,8 +33,8 @@ void KosguView::RefreshData() {
     if (dbManager) {
         kosguEntries = dbManager->getKosguEntries();
         suspiciousWordsForFilter = dbManager->getSuspiciousWords();
-        selectedKosguIndex = -1;
         UpdateFilteredKosgu();
+        ReconcileSelectionAfterFilter();
     }
 }
 
@@ -195,6 +196,91 @@ void KosguView::UpdateFilteredKosgu() {
 }
 
 // Вспомогательная функция для сортировки
+void KosguView::ClearKosguSelection() {
+    selectedKosgu = Kosgu{};
+    originalKosgu = Kosgu{};
+    selectedKosguIndex = -1;
+    payment_info.clear();
+    m_filtered_payment_info.clear();
+    isAdding = false;
+    isDirty = false;
+}
+
+void KosguView::RefreshSelectedKosguPaymentInfo() {
+    if (!dbManager || selectedKosgu.id <= 0) {
+        payment_info.clear();
+        m_filtered_payment_info.clear();
+        return;
+    }
+
+    payment_info = dbManager->getPaymentInfoForKosgu(selectedKosgu.id);
+    std::vector<ContractPaymentInfo> details_to_show = payment_info;
+
+    if (m_filter_index == 3 && !suspiciousWordsForFilter.empty()) {
+        details_to_show.clear();
+        for (const auto &info : payment_info) {
+            for (const auto &word : suspiciousWordsForFilter) {
+                if (strcasestr(info.description.c_str(), word.word.c_str()) != nullptr) {
+                    details_to_show.push_back(info);
+                    break;
+                }
+            }
+        }
+    }
+
+    m_filtered_payment_info.clear();
+    if (filterText[0] != '\0') {
+        for (const auto &info : details_to_show) {
+            bool match = strcasestr(info.date.c_str(), filterText) != nullptr ||
+                         strcasestr(info.doc_number.c_str(), filterText) != nullptr ||
+                         strcasestr(info.counterparty_name.c_str(), filterText) != nullptr ||
+                         strcasestr(info.description.c_str(), filterText) != nullptr;
+            if (!match) {
+                char amount_str[32];
+                snprintf(amount_str, sizeof(amount_str), "%.2f", info.amount);
+                match = strcasestr(amount_str, filterText) != nullptr;
+            }
+            if (match) {
+                m_filtered_payment_info.push_back(info);
+            }
+        }
+    } else {
+        m_filtered_payment_info = details_to_show;
+    }
+}
+
+void KosguView::SelectKosguAtFilteredIndex(int index) {
+    if (index < 0 || index >= static_cast<int>(m_filtered_kosgu_entries.size())) {
+        ClearKosguSelection();
+        return;
+    }
+
+    selectedKosguIndex = index;
+    selectedKosgu = m_filtered_kosgu_entries[index];
+    originalKosgu = selectedKosgu;
+    isAdding = false;
+    isDirty = false;
+    RefreshSelectedKosguPaymentInfo();
+}
+
+void KosguView::ReconcileSelectionAfterFilter() {
+    if (selectedKosgu.id <= 0) {
+        selectedKosguIndex = -1;
+        payment_info.clear();
+        m_filtered_payment_info.clear();
+        return;
+    }
+
+    for (int i = 0; i < static_cast<int>(m_filtered_kosgu_entries.size()); ++i) {
+        if (m_filtered_kosgu_entries[i].id == selectedKosgu.id) {
+            SelectKosguAtFilteredIndex(i);
+            return;
+        }
+    }
+
+    ClearKosguSelection();
+}
+
 static void SortKosgu(std::vector<Kosgu> &kosguEntries,
                       const ImGuiTableSortSpecs *sort_specs) {
     std::sort(kosguEntries.begin(), kosguEntries.end(),
@@ -343,16 +429,15 @@ void KosguView::Render() {
                 }
             }
             if (selectedKosguIndex != -1) {
-                selectedKosgu = m_filtered_kosgu_entries[selectedKosguIndex];
-                originalKosgu = selectedKosgu;
+                SelectKosguAtFilteredIndex(selectedKosguIndex);
             }
             isAdding = false;
             isDirty = false;
         }
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_TRASH " Удалить")) {
-            if (selectedKosguIndex != -1) {
-                kosgu_id_to_delete = m_filtered_kosgu_entries[selectedKosguIndex].id;
+            if (selectedKosgu.id > 0) {
+                kosgu_id_to_delete = selectedKosgu.id;
                 show_delete_popup = true;
             }
         }
@@ -363,14 +448,14 @@ void KosguView::Render() {
         }
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_LIST " Отчет по расшифровкам")) {
-            if (!isAdding && selectedKosguIndex != -1 && dbManager) {
+            if (!isAdding && selectedKosgu.id > 0 && dbManager) {
                 std::string query = "SELECT k.kps AS 'КПС', k.code AS 'КОСГУ', p.date AS 'Дата', p.doc_number AS 'Номер док.', "
                                     "pd.amount AS 'Сумма', p.description AS 'Назначение', c.name AS 'Контрагент' "
                                     "FROM PaymentDetails pd "
                                     "JOIN Payments p ON pd.payment_id = p.id "
                                     "JOIN KOSGU k ON pd.kosgu_id = k.id "
                                     "LEFT JOIN Counterparties c ON p.counterparty_id = c.id "
-                                    "WHERE pd.kosgu_id = " + std::to_string(m_filtered_kosgu_entries[selectedKosguIndex].id) +
+                                    "WHERE pd.kosgu_id = " + std::to_string(selectedKosgu.id) +
                                     (filterText[0] != '\0' ? " AND (LOWER(p.date) LIKE LOWER('%" + std::string(filterText) + "%') "
                                     "OR LOWER(p.doc_number) LIKE LOWER('%" + std::string(filterText) + "%') "
                                     "OR LOWER(pd.amount) LIKE LOWER('%" + std::string(filterText) + "%') "
@@ -380,7 +465,7 @@ void KosguView::Render() {
                                     "OR LOWER(k.code) LIKE LOWER('%" + std::string(filterText) + "%'))" : "") +
                                     ";";
                 if (uiManager) {
-                    uiManager->CreateSpecialQueryView("Отчет по расшифровкам КОСГУ " + m_filtered_kosgu_entries[selectedKosguIndex].code, query);
+                    uiManager->CreateSpecialQueryView("Отчет по расшифровкам КОСГУ " + selectedKosgu.code, query);
                 }
             }
         }
@@ -393,8 +478,7 @@ void KosguView::Render() {
             if (dbManager && kosgu_id_to_delete != -1) {
                 dbManager->deleteKosguEntry(kosgu_id_to_delete);
                 RefreshData();
-                selectedKosgu = Kosgu{};
-                originalKosgu = Kosgu{};
+                ClearKosguSelection();
             }
             kosgu_id_to_delete = -1;
         }
@@ -427,6 +511,7 @@ void KosguView::Render() {
         if (filter_changed) {
             SaveChanges();
             UpdateFilteredKosgu();
+            ReconcileSelectionAfterFilter();
         }
 
         ImGui::BeginChild("KosguList", ImVec2(0, list_view_height), true,
@@ -472,13 +557,13 @@ void KosguView::Render() {
 
                     int kosgu_id = m_filtered_kosgu_entries[i].id;
 
-                    bool is_selected = (selectedKosguIndex == i);
+                    bool is_selected = (selectedKosgu.id == kosgu_id);
                     char label[256];
                     sprintf(label, "%d##%d", m_filtered_kosgu_entries[i].id, i);
                     if (ImGui::Selectable(
                             label, is_selected,
                             ImGuiSelectableFlags_SpanAllColumns)) {
-                        if (selectedKosguIndex != i) {
+                        if (selectedKosgu.id != kosgu_id) {
                             SaveChanges();
                             selectedKosguIndex = i;
                             selectedKosgu = m_filtered_kosgu_entries[i];
@@ -553,9 +638,7 @@ void KosguView::Render() {
 
         CustomWidgets::HorizontalSplitter("h_splitter", &list_view_height);
 
-        if ((selectedKosguIndex != -1 &&
-             selectedKosguIndex < (int)m_filtered_kosgu_entries.size()) ||
-            isAdding) {
+        if (selectedKosgu.id > 0 || isAdding) {
             ImGui::BeginChild("KosguEditor", ImVec2(editor_width, 0), true);
 
             if (isAdding) {

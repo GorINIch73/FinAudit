@@ -1,6 +1,7 @@
 #include "CounterpartiesView.h"
 #include "../CustomWidgets.h"
 #include "../IconsFontAwesome6.h"
+#include "../PlatformUtils.h"
 #include "../UIManager.h"
 #include <algorithm>
 #include <cstring>
@@ -45,7 +46,9 @@ void CounterpartiesView::RefreshData() {
                                        return c.id == selectedCounterparty.id;
                                    });
             if (it == counterparties.end()) {
-                selectedCounterparty = Counterparty{};
+                ClearCounterpartySelection();
+            } else {
+                ReconcileSelectionAfterFilter();
             }
         }
     }
@@ -214,6 +217,44 @@ void CounterpartiesView::UpdateFilteredCounterparties() {
     }
 }
 
+void CounterpartiesView::ClearCounterpartySelection() {
+    selectedCounterparty = Counterparty{};
+    originalCounterparty = Counterparty{};
+    payment_info.clear();
+    m_sorted_payment_info.clear();
+    isAdding = false;
+    isDirty = false;
+}
+
+void CounterpartiesView::SelectCounterparty(const Counterparty& counterparty) {
+    selectedCounterparty = counterparty;
+    originalCounterparty = counterparty;
+    isAdding = false;
+    isDirty = false;
+    m_sorted_payment_info.clear();
+    payment_info =
+        dbManager ? dbManager->getPaymentInfoForCounterparty(selectedCounterparty.id)
+                  : std::vector<ContractPaymentInfo>();
+}
+
+void CounterpartiesView::ReconcileSelectionAfterFilter() {
+    if (selectedCounterparty.id <= 0) {
+        payment_info.clear();
+        m_sorted_payment_info.clear();
+        return;
+    }
+
+    auto it = std::find_if(
+        m_filtered_counterparties.begin(), m_filtered_counterparties.end(),
+        [&](const Counterparty &c) { return c.id == selectedCounterparty.id; });
+    if (it == m_filtered_counterparties.end()) {
+        ClearCounterpartySelection();
+        return;
+    }
+
+    SelectCounterparty(*it);
+}
+
 void CounterpartiesView::Render() {
     if (!IsVisible) {
         if (isDirty) {
@@ -245,8 +286,7 @@ void CounterpartiesView::Render() {
             scroll_pending = false;
             for (int i = 0; i < (int)m_filtered_counterparties.size(); i++) {
                 if (m_filtered_counterparties[i].id == new_id) {
-                    selectedCounterparty = m_filtered_counterparties[i];
-                    originalCounterparty = selectedCounterparty;
+                    SelectCounterparty(m_filtered_counterparties[i]);
                     scroll_to_item_index = i;
                     break;
                 }
@@ -260,8 +300,7 @@ void CounterpartiesView::Render() {
                     ApplyStoredSorting();
                     for (int i = 0; i < (int)m_filtered_counterparties.size(); i++) {
                         if (m_filtered_counterparties[i].id == new_id) {
-                            selectedCounterparty = m_filtered_counterparties[i];
-                            originalCounterparty = selectedCounterparty;
+                            SelectCounterparty(m_filtered_counterparties[i]);
                             scroll_to_item_index = i;
                             break;
                         }
@@ -337,8 +376,7 @@ void CounterpartiesView::Render() {
             if (dbManager && counterparty_id_to_delete != -1) {
                 dbManager->deleteCounterparty(counterparty_id_to_delete);
                 RefreshData();
-                selectedCounterparty = Counterparty{};
-                originalCounterparty = Counterparty{};
+                ClearCounterpartySelection();
             }
             counterparty_id_to_delete = -1;
         }
@@ -361,6 +399,7 @@ void CounterpartiesView::Render() {
         if (filter_changed) {
             SaveChanges();
             UpdateFilteredCounterparties();
+            ReconcileSelectionAfterFilter();
         }
 
         // Таблица со списком
@@ -388,7 +427,6 @@ void CounterpartiesView::Render() {
             }
 
             // Используем ID для отслеживания выделения вместо индекса
-            static int selectedCounterpartyId = -1;
 
             // Прокрутка к новой записи: SetScrollY вызывается ОДИН раз
             if (scroll_to_item_index >= 0 && scroll_to_item_index < (int)m_filtered_counterparties.size()) {
@@ -407,7 +445,7 @@ void CounterpartiesView::Render() {
                 for (int i = clipper.DisplayStart; i < clipper.DisplayEnd && !need_to_break;
                      ++i) {
                     const Counterparty &cp = m_filtered_counterparties[i];
-                    bool is_selected = (selectedCounterpartyId == cp.id);
+                    bool is_selected = (selectedCounterparty.id == cp.id);
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
@@ -416,7 +454,7 @@ void CounterpartiesView::Render() {
                     sprintf(label, "%d##%d", cp.id, i);
                     if (ImGui::Selectable(label, is_selected,
                                           ImGuiSelectableFlags_SpanAllColumns)) {
-                        if (selectedCounterpartyId != cp.id) {
+                        if (selectedCounterparty.id != cp.id) {
                             SaveChanges();
                             auto it = std::find_if(
                                 counterparties.begin(), counterparties.end(),
@@ -424,17 +462,7 @@ void CounterpartiesView::Render() {
                                     return c.id == cp.id;
                                 });
                             if (it != counterparties.end()) {
-                                selectedCounterpartyId = cp.id;
-                                selectedCounterparty = *it;
-                                originalCounterparty = *it;
-                                isAdding = false;
-                                isDirty = false;
-                                m_sorted_payment_info.clear();
-                                if (dbManager) {
-                                    payment_info =
-                                        dbManager->getPaymentInfoForCounterparty(
-                                            selectedCounterparty.id);
-                                }
+                                SelectCounterparty(*it);
                             }
                             need_to_break = true;
                         }

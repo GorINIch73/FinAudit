@@ -51,6 +51,24 @@ void ReconciliationView::RefreshData() {
     }
 
     filtered_records = records;
+    ReconcileSelectionAfterRefresh();
+}
+
+void ReconciliationView::ReconcileSelectionAfterRefresh() {
+    if (selected_payment_id <= 0) {
+        selected_index = -1;
+        return;
+    }
+
+    for (int i = 0; i < static_cast<int>(payment_groups.size()); ++i) {
+        if (payment_groups[i].payment_id == selected_payment_id) {
+            selected_index = i;
+            return;
+        }
+    }
+
+    selected_index = -1;
+    selected_payment_id = -1;
 }
 
 void ReconciliationView::OnDeactivate() {
@@ -122,7 +140,7 @@ void ReconciliationView::Render() {
 
         for (int g = 0; g < payment_groups.size(); g++) {
             const auto& group = payment_groups[g];
-            bool is_selected = (g == selected_index);
+            bool is_selected = (group.payment_id == selected_payment_id);
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BaseView.h"
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -23,11 +24,20 @@ private:
     };
 
     void RefreshData();
+    bool WriteHtmlReport(std::filesystem::path& htmlPath);
+    void PrintReport();
+    void ApplyCurrentSort();
+    void StoreSortSpecs(const struct ImGuiTableSortSpecs* specs);
+    std::string BuildPdfReportTitle() const;
+    std::string BuildHtmlReport() const;
+    std::string BuildReportBaseName() const;
     std::string BuildQuery() const;
+    const char* GetGroupingModeName() const;
     static std::string FormatMoney(double value);
     static std::string FormatPercent(double value);
     static double ParseDouble(const std::string& value);
     static std::string EscapeSqlLiteral(const char* value);
+    static std::string EscapeHtml(const std::string& value);
     static std::string NormalizeDateFilter(const char* value);
 
     std::vector<Row> rows;
@@ -37,4 +47,8 @@ private:
     char endDate[16] = {0};
     bool includeIncoming = false;
     bool needsRefresh = true;
+    std::string exportStatus;
+    int sortColumn = 2;
+    int sortDirection = 1;
+    bool hasStoredSort = true;
 };

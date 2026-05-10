@@ -20,6 +20,10 @@ public:
 private:
     void RefreshData();
     bool SaveChanges();
+    void ClearKosguSelection();
+    void RefreshSelectedKosguPaymentInfo();
+    void SelectKosguAtFilteredIndex(int index);
+    void ReconcileSelectionAfterFilter();
 
     std::vector<Kosgu> kosguEntries;
     Kosgu selectedKosgu;

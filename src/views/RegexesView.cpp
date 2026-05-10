@@ -1,6 +1,7 @@
 #include "RegexesView.h"
 #include "../CustomWidgets.h"
 #include "../IconsFontAwesome6.h"
+#include "../PlatformUtils.h"
 #include "imgui.h"
 #include "imgui_stdlib.h"
 #include <algorithm>
@@ -29,7 +30,7 @@ void RegexesView::SetPdfReporter(PdfReporter *reporter) {
 void RegexesView::RefreshData() {
     if (dbManager) {
         regexes = dbManager->getRegexes();
-        selectedRegexIndex = -1;
+        ReconcileSelectionAfterFilter();
     }
 }
 
@@ -73,6 +74,38 @@ void RegexesView::SaveChanges() {
     isDirty = false;
 }
 
+void RegexesView::ClearRegexSelection() {
+    selectedRegex = Regex{};
+    originalRegex = Regex{};
+    selectedRegexIndex = -1;
+    isAdding = false;
+    isDirty = false;
+}
+
+void RegexesView::ReconcileSelectionAfterFilter() {
+    if (selectedRegex.id <= 0) {
+        selectedRegexIndex = -1;
+        return;
+    }
+
+    for (int i = 0; i < static_cast<int>(regexes.size()); ++i) {
+        if (regexes[i].id != selectedRegex.id) {
+            continue;
+        }
+        if (filterText[0] != '\0' &&
+            strcasestr(regexes[i].name.c_str(), filterText) == nullptr) {
+            ClearRegexSelection();
+            return;
+        }
+        selectedRegexIndex = i;
+        selectedRegex = regexes[i];
+        originalRegex = selectedRegex;
+        return;
+    }
+
+    ClearRegexSelection();
+}
+
 void RegexesView::Render() {
     if (!IsVisible) {
         if (isDirty) {
@@ -114,8 +147,8 @@ void RegexesView::Render() {
         }
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_TRASH " Удалить")) {
-            if (selectedRegexIndex != -1) {
-                regex_id_to_delete = regexes[selectedRegexIndex].id;
+            if (selectedRegex.id > 0) {
+                regex_id_to_delete = selectedRegex.id;
                 show_delete_popup = true;
             }
         }
@@ -136,17 +169,19 @@ void RegexesView::Render() {
             if (dbManager && regex_id_to_delete != -1) {
                 dbManager->deleteRegex(regex_id_to_delete);
                 RefreshData();
-                selectedRegex = Regex{};
-                originalRegex = Regex{};
+                ClearRegexSelection();
             }
             regex_id_to_delete = -1;
         }
 
         ImGui::Separator();
-        ImGui::InputText("Фильтр по имени", filterText, sizeof(filterText));
+        if (ImGui::InputText("Фильтр по имени", filterText, sizeof(filterText))) {
+            ReconcileSelectionAfterFilter();
+        }
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_XMARK "##clear_filter_regex")) {
             filterText[0] = '\0';
+            ReconcileSelectionAfterFilter();
         }
 
         // --- Regex List ---
@@ -221,7 +256,7 @@ void RegexesView::Render() {
 
         // --- Editor ---
         ImGui::BeginChild("RegexEditor", ImVec2(0, 0), true);
-        if ((selectedRegexIndex != -1 && selectedRegexIndex < (int)regexes.size()) || isAdding) {
+        if (selectedRegex.id > 0 || isAdding) {
             if (isAdding) {
                 ImGui::Text("Добавление нового выражения");
             } else {

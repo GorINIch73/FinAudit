@@ -18,6 +18,7 @@ public:
 
 private:
     void RefreshData();
+    void ReconcileSelectionAfterRefresh();
 
     std::vector<DatabaseManager::ReconciliationRecord> records;
     std::vector<DatabaseManager::ReconciliationRecord> filtered_records;

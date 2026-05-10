@@ -10,12 +10,21 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include "IconsFontAwesome6.h"
 #include "ImGuiFileDialog.h"
 #include "ImportManager.h"
+#include "PlatformUtils.h"
 #include "PdfReporter.h"
 #include "imgui.h"
 #include "views/BaseView.h"
+
 #include <GLFW/glfw3.h>
 
 #ifdef __linux__
@@ -48,6 +57,15 @@ std::string getAssetPath(const std::string &assetName) {
         searchPaths.push_back(exeDir / ".." / "data" / assetName);
         // Для запуска из корня проекта (менее вероятно для сборок)
         searchPaths.push_back(exeDir / "data" / assetName);
+    }
+#elif defined(_WIN32)
+    char result[MAX_PATH];
+    DWORD count = GetModuleFileNameA(nullptr, result, MAX_PATH);
+    if (count > 0 && count < MAX_PATH) {
+        std::filesystem::path exeDir =
+            std::filesystem::path(std::string(result, count)).parent_path();
+        searchPaths.push_back(exeDir / "data" / assetName);
+        searchPaths.push_back(exeDir / ".." / "data" / assetName);
     }
 #endif
 
@@ -607,10 +625,15 @@ void UIManager::HandleFileDialogs() {
                 ImGuiFileDialog::Instance()->GetFilePathName();
             if (!currentDbPath.empty() && newFilePath != currentDbPath) {
                 try {
+                    if (!SaveAllViews()) {
+                        ImGuiFileDialog::Instance()->Close();
+                        return;
+                    }
                     if (dbManager->backupTo(newFilePath)) {
-                        currentDbPath = newFilePath;
-                        AddRecentDbPath(newFilePath);
-                        SetWindowTitle(currentDbPath);
+                        if (!LoadDatabase(newFilePath)) {
+                            ShowError("РљРѕРїРёСЏ Р±Р°Р·С‹ СЃРѕС…СЂР°РЅРµРЅР°, РЅРѕ РЅРµ СѓРґР°Р»РѕСЃСЊ РїРµСЂРµРєР»СЋС‡РёС‚СЊСЃСЏ РЅР° РЅРµС‘: " +
+                                      newFilePath);
+                        }
                     } else {
                         ShowError("Не удалось сохранить копию базы данных: " +
                                   newFilePath);
@@ -813,7 +836,8 @@ void UIManager::Render() {
 void UIManager::ExportKosgu(const std::string& path) {
     if (!dbManager) return;
     auto entries = dbManager->getKosguEntries();
-    std::ofstream file(path);
+    std::ofstream file;
+    platformOpenOutputFile(file, path);
     if (!file.is_open()) {
         std::cerr << "Failed to open file for writing: " << path << std::endl;
         return;
@@ -829,7 +853,8 @@ void UIManager::ExportKosgu(const std::string& path) {
 void UIManager::ExportSuspiciousWords(const std::string& path) {
     if (!dbManager) return;
     auto entries = dbManager->getSuspiciousWords();
-    std::ofstream file(path);
+    std::ofstream file;
+    platformOpenOutputFile(file, path);
     if (!file.is_open()) {
         std::cerr << "Failed to open file for writing: " << path << std::endl;
         return;
@@ -844,7 +869,8 @@ void UIManager::ExportSuspiciousWords(const std::string& path) {
 void UIManager::ExportRegexes(const std::string& path) {
     if (!dbManager) return;
     auto entries = dbManager->getRegexes();
-    std::ofstream file(path);
+    std::ofstream file;
+    platformOpenOutputFile(file, path);
     if (!file.is_open()) {
         std::cerr << "Failed to open file for writing: " << path << std::endl;
         return;
@@ -867,16 +893,7 @@ void UIManager::ExportContractsForCheckingPdf() {
 
     std::string filename = "contracts.pdf";
     if (pdfReporter->generateContractsReport(filename, settings, contracts)) {
-        // Open the generated PDF with the default system viewer
-        std::string command = "xdg-open " + filename + " &";
-        std::cout << "Attempting to open PDF with command: " << command << std::endl;
-        // On Linux, xdg-open is common. On macOS, 'open', on Windows 'start'
-        // For a cross-platform solution, a more robust approach would be needed.
-        // For now, assuming xdg-open for Linux environment.
-        int result = std::system(command.c_str());
-        if (result != 0) {
-            std::cerr << "Failed to open PDF with xdg-open. Error code: " << result << std::endl;
-        }
+        platformOpenOrLog(filename, "PDF");
     } else {
         std::cerr << "Failed to generate contracts PDF report." << std::endl;
     }
@@ -928,7 +945,8 @@ static std::vector<std::string> parse_csv_line(const std::string &line) {
 void UIManager::ImportKosgu(const std::string& path) {
     if (!dbManager) return;
 
-    std::ifstream file(path);
+    std::ifstream file;
+    platformOpenInputFile(file, path);
     if (!file.is_open()) {
         std::cerr << "Failed to open file for reading: " << path << std::endl;
         return;
@@ -970,7 +988,8 @@ void UIManager::ImportKosgu(const std::string& path) {
 void UIManager::ImportSuspiciousWords(const std::string& path) {
     if (!dbManager) return;
 
-    std::ifstream file(path);
+    std::ifstream file;
+    platformOpenInputFile(file, path);
     if (!file.is_open()) {
         std::cerr << "Failed to open file for reading: " << path << std::endl;
         return;
@@ -999,7 +1018,8 @@ void UIManager::ImportSuspiciousWords(const std::string& path) {
 void UIManager::ImportRegexes(const std::string& path) {
     if (!dbManager) return;
 
-    std::ifstream file(path);
+    std::ifstream file;
+    platformOpenInputFile(file, path);
     if (!file.is_open()) {
         std::cerr << "Failed to open file for reading: " << path << std::endl;
         return;

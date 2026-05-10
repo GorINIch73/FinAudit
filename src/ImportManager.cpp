@@ -1,4 +1,5 @@
 #include "ImportManager.h"
+#include "PlatformUtils.h"
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -215,7 +216,8 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
         return false;
     }
 
-    std::ifstream file(filepath);
+    std::ifstream file;
+    platformOpenInputFile(file, filepath);
     if (!file.is_open()) {
         std::lock_guard<std::mutex> lock(message_mutex);
         message = "Ошибка: Не удалось открыть TSV файл: " + filepath;
@@ -525,7 +527,8 @@ bool ImportManager::importIKZFromFile(
         return false;
     }
 
-    std::ifstream file(filepath);
+    std::ifstream file;
+    platformOpenInputFile(file, filepath);
     if (!file.is_open()) {
         std::lock_guard<std::mutex> lock(message_mutex);
         message = "Ошибка: Не удалось открыть файл: " + filepath;
@@ -679,7 +682,8 @@ JournalOrder4DryRunResult ImportManager::AnalyzeJournalOrder4FromTsv(
 ) {
     JournalOrder4DryRunResult result;
 
-    std::ifstream file(filepath);
+    std::ifstream file;
+    platformOpenInputFile(file, filepath);
     if (!file.is_open()) {
         result.sample_errors.push_back("Не удалось открыть файл: " + filepath);
         return result;
@@ -779,7 +783,8 @@ bool ImportManager::ImportJournalOrder4FromTsv(
         return false;
     }
 
-    std::ifstream file(filepath);
+    std::ifstream file;
+    platformOpenInputFile(file, filepath);
     if (!file.is_open()) {
         std::lock_guard<std::mutex> lock(message_mutex);
         message = "Ошибка: Не удалось открыть TSV файл: " + filepath;

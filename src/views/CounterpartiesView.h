@@ -21,6 +21,9 @@ private:
     void RefreshData();
     bool SaveChanges();
     void UpdateFilteredCounterparties();
+    void ClearCounterpartySelection();
+    void SelectCounterparty(const Counterparty& counterparty);
+    void ReconcileSelectionAfterFilter();
 
     std::vector<Counterparty> counterparties;
     std::vector<Counterparty> m_filtered_counterparties;

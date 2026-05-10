@@ -35,14 +35,14 @@ bool PdfReporter::generatePdfFromTable(
     const std::vector<std::vector<std::string>>& rows
 ) {
     // PDF metadata
-    struct pdf_info info = {
-        .creator = "Financial Audit Application",
-        .producer = "Financial Audit Application",
-        .title = "", // Set title dynamically
-        .author = "System",
-        .subject = "Report",
-        .date = "Generated"
-    };
+    struct pdf_info info = {};
+    strncpy(info.creator, "Financial Audit Application",
+            sizeof(info.creator) - 1);
+    strncpy(info.producer, "Financial Audit Application",
+            sizeof(info.producer) - 1);
+    strncpy(info.author, "System", sizeof(info.author) - 1);
+    strncpy(info.subject, "Report", sizeof(info.subject) - 1);
+    strncpy(info.date, "Generated", sizeof(info.date) - 1);
     strncpy(info.title, title.c_str(), sizeof(info.title) - 1);
 
     // Get current time for timestamp

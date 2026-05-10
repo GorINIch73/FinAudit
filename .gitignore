@@ -2,5 +2,6 @@
 *.tsv
 *.csv
 build/
+build-windows/
 imgui.ini
 .recent_dbs.txt

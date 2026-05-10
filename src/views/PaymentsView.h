@@ -32,6 +32,9 @@ private:
     bool SaveChanges();
     bool SaveDetailChanges();
     bool IsSelectedPaymentContractOptional() const;
+    void ClearPaymentSelection();
+    void SelectPaymentAtFilteredIndex(int index);
+    void ReconcileSelectionAfterFilter();
 
     UIManager* uiManager = nullptr;
     std::vector<Payment> payments;
@@ -49,6 +52,7 @@ private:
     bool isAdding;
     bool isDirty = false;
 
+    std::string recipientBuffer;
     std::string descriptionBuffer;
     std::string noteBuffer;
 
@@ -92,28 +96,23 @@ private:
     char counterpartyFilter[256];
     char kosguFilter[256];
     char contractFilter[256];
-    char invoiceFilter[256];
 
     int missing_info_filter_index = 0;
 
     // Group operations
     int groupKosguId = -1;
     int groupContractId = -1;
-    int groupInvoiceId = -1;
     char groupKosguFilter[256];
     char groupContractFilter[256];
-    char groupInvoiceFilter[256];
 
     // Bulk replace operations
     bool show_replace_popup = false;
     bool show_add_kosgu_popup = false;
-    int replacement_target = 0; // 0 for KOSGU, 1 for Contract, 2 for Invoice
+    int replacement_target = 0; // 0 for KOSGU, 1 for Contract
     int replacement_kosgu_id = -1;
     int replacement_contract_id = -1;
-    int replacement_base_document_id = -1;
     char replacement_kosgu_filter[256]{};
     char replacement_contract_filter[256]{};
-    char replacement_invoice_filter[256]{};
 
     // For "Create from Description" popup
     bool show_create_from_desc_popup = false;

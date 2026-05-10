@@ -26,6 +26,12 @@ private:
     void RefreshData();
     void RefreshDropdownData();
     bool SaveChanges();
+    void ClearContractSelection();
+    void SelectContractAtFilteredIndex(int index);
+    void ReconcileSelectionAfterFilter();
+    std::string BuildActTotalsQuery() const;
+    void PrintActTotalsReport();
+    static std::string EscapeHtml(const std::string& value);
 
     std::vector<Contract> contracts;
     Contract selectedContract;
@@ -43,6 +49,7 @@ private:
     std::vector<Counterparty> counterpartiesForDropdown;
     char filterText[256];
     char counterpartyFilter[256];
+    std::string printStatus;
     float list_view_height = 200.0f;
     float editor_width = 400.0f;
 

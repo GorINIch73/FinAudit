@@ -1,15 +1,18 @@
 #include "ContractsView.h"
 #include "../CustomWidgets.h"
 #include "../IconsFontAwesome6.h"
+#include "../PlatformUtils.h"
 #include "../SuspiciousWord.h"
 #include "../UIManager.h" // Added include for UIManager
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <sstream> // For std::ostringstream
 
-#include <cstdlib>
 #include <functional> // Добавить для std::function
 
 ContractsView::ContractsView()
@@ -38,8 +41,8 @@ void ContractsView::SetUIManager(UIManager *manager) { uiManager = manager; }
 void ContractsView::RefreshData() {
     if (dbManager) {
         contracts = dbManager->getContracts();
-        selectedContractIndex = -1;
         UpdateFilteredContracts();
+        ReconcileSelectionAfterFilter();
     }
 }
 
@@ -115,6 +118,179 @@ bool ContractsView::SaveChanges() {
 
     isDirty = false;
     return true;
+}
+
+std::string ContractsView::BuildActTotalsQuery() const {
+    return "SELECT KOSGU.code AS 'КОСГУ', KOSGU.name AS 'Наименование', "
+           "ROUND(SUM(PaymentDetails.amount),2) AS 'Сумма', "
+           "COUNT(DISTINCT Contracts.id) AS 'Договоров' "
+           "FROM PaymentDetails "
+           "INNER JOIN Contracts ON PaymentDetails.contract_id = Contracts.id "
+           "INNER JOIN KOSGU ON PaymentDetails.kosgu_id = KOSGU.id "
+           "INNER JOIN Payments ON PaymentDetails.payment_id = Payments.id "
+           "INNER JOIN Counterparties ON "
+           "Contracts.counterparty_id = Counterparties.id "
+           "WHERE Contracts.is_found = true "
+           "GROUP BY KOSGU.code, KOSGU.name "
+           "ORDER BY KOSGU.code";
+}
+
+std::string ContractsView::EscapeHtml(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (char ch : value) {
+        switch (ch) {
+        case '&':
+            escaped += "&amp;";
+            break;
+        case '<':
+            escaped += "&lt;";
+            break;
+        case '>':
+            escaped += "&gt;";
+            break;
+        case '"':
+            escaped += "&quot;";
+            break;
+        case '\'':
+            escaped += "&#39;";
+            break;
+        default:
+            escaped += ch;
+            break;
+        }
+    }
+    return escaped;
+}
+
+void ContractsView::PrintActTotalsReport() {
+    printStatus.clear();
+    if (!dbManager || !dbManager->is_open()) {
+        printStatus = "Откройте базу данных перед печатью отчета.";
+        return;
+    }
+
+    std::vector<std::string> columns;
+    std::vector<std::vector<std::string>> rows;
+    if (!dbManager->executeSelect(BuildActTotalsQuery(), columns, rows)) {
+        printStatus = "Не удалось сформировать итоги для акта.";
+        return;
+    }
+    if (rows.empty()) {
+        printStatus = "Нет данных для печати итогов для акта.";
+        return;
+    }
+
+    std::error_code ec;
+    std::filesystem::path reportsDir = std::filesystem::current_path() / "reports";
+    std::filesystem::create_directories(reportsDir, ec);
+    if (ec) {
+        printStatus = "Не удалось создать папку reports.";
+        return;
+    }
+
+    std::time_t now = std::time(nullptr);
+    std::tm* localTime = std::localtime(&now);
+    char stamp[32] = {0};
+    std::strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", localTime);
+    std::filesystem::path htmlPath =
+        reportsDir / (std::string("contract_act_totals_") + stamp + ".html");
+
+    std::ofstream htmlFile;
+    platformOpenOutputFile(htmlFile, htmlPath.string(),
+                           std::ios::out | std::ios::binary);
+    if (!htmlFile) {
+        printStatus = "Не удалось записать HTML отчета.";
+        return;
+    }
+
+    const unsigned char bom[] = {0xEF, 0xBB, 0xBF};
+    htmlFile.write(reinterpret_cast<const char*>(bom), sizeof(bom));
+    htmlFile
+        << "<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\">"
+        << "<title>Итоги для акта</title>"
+        << "<style>"
+        << "@page{size:A4;margin:14mm 12mm;}"
+        << "body{font-family:'Segoe UI',Arial,sans-serif;color:#1f2933;margin:0;}"
+        << "h1{font-size:22px;margin:0 0 12px;}"
+        << ".meta{font-size:11px;color:#4b5563;margin:0 0 14px;}"
+        << "table{width:100%;border-collapse:collapse;font-size:11px;}"
+        << "thead{display:table-header-group;}"
+        << "th{background:#2f5d62;color:white;text-align:left;padding:7px 8px;"
+        << "border:1px solid #2f5d62;}"
+        << "td{padding:6px 8px;border:1px solid #d7dee0;vertical-align:top;}"
+        << "tbody tr:nth-child(even){background:#f6f9f9;}"
+        << ".num{text-align:right;white-space:nowrap;}"
+        << "</style></head><body>";
+    htmlFile << "<h1>Итоги для акта</h1>";
+    htmlFile << "<div class=\"meta\">Источник: найденные договоры, суммы по "
+                "расшифровкам платежей. Строк: "
+             << rows.size() << "</div>";
+    htmlFile << "<table><thead><tr>";
+    for (const auto& column : columns) {
+        htmlFile << "<th>" << EscapeHtml(column) << "</th>";
+    }
+    htmlFile << "</tr></thead><tbody>";
+    for (const auto& row : rows) {
+        htmlFile << "<tr>";
+        for (size_t i = 0; i < columns.size(); ++i) {
+            const std::string value = i < row.size() ? row[i] : "";
+            const bool numericColumn = i >= 2;
+            htmlFile << (numericColumn ? "<td class=\"num\">" : "<td>")
+                     << EscapeHtml(value) << "</td>";
+        }
+        htmlFile << "</tr>";
+    }
+    htmlFile << "</tbody></table></body></html>";
+    htmlFile.close();
+
+    platformOpenOrLog(htmlPath.string(), "contract act totals print report");
+    printStatus = "Печатная версия открыта: " + htmlPath.string();
+}
+
+void ContractsView::ClearContractSelection() {
+    selectedContract = Contract{};
+    originalContract = Contract{};
+    selectedContractIndex = -1;
+    payment_info.clear();
+    m_sorted_payment_info.clear();
+    isAdding = false;
+    isDirty = false;
+}
+
+void ContractsView::SelectContractAtFilteredIndex(int index) {
+    if (index < 0 || index >= static_cast<int>(m_filtered_contracts.size())) {
+        ClearContractSelection();
+        return;
+    }
+
+    selectedContractIndex = index;
+    selectedContract = m_filtered_contracts[index];
+    originalContract = selectedContract;
+    isAdding = false;
+    isDirty = false;
+    m_sorted_payment_info.clear();
+    payment_info =
+        dbManager ? dbManager->getPaymentInfoForContract(selectedContract.id)
+                  : std::vector<ContractPaymentInfo>();
+}
+
+void ContractsView::ReconcileSelectionAfterFilter() {
+    if (selectedContract.id <= 0) {
+        selectedContractIndex = -1;
+        payment_info.clear();
+        m_sorted_payment_info.clear();
+        return;
+    }
+
+    for (int i = 0; i < static_cast<int>(m_filtered_contracts.size()); ++i) {
+        if (m_filtered_contracts[i].id == selectedContract.id) {
+            SelectContractAtFilteredIndex(i);
+            return;
+        }
+    }
+
+    ClearContractSelection();
 }
 
 void ContractsView::SortContracts(const ImGuiTableSortSpecs *sort_specs) {
@@ -445,17 +621,15 @@ void ContractsView::Render() {
                 }
             }
             if (selectedContractIndex != -1) {
-                selectedContract = m_filtered_contracts[selectedContractIndex];
-                originalContract = selectedContract;
+                SelectContractAtFilteredIndex(selectedContractIndex);
             }
             isAdding = false;
             isDirty = false;
         }
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_TRASH " Удалить")) {
-            if (selectedContractIndex != -1 &&
-                selectedContractIndex < (int)contracts.size()) {
-                contract_id_to_delete = contracts[selectedContractIndex].id;
+            if (selectedContract.id > 0) {
+                contract_id_to_delete = selectedContract.id;
                 show_delete_popup = true;
                 destination_contract_id = -1; // Reset on popup open
                 memset(contract_search_buffer, 0,
@@ -593,22 +767,18 @@ void ContractsView::Render() {
         ImGui::SameLine();
         if (ImGui::Button("Итоги для акта")) { // New button for report
             if (uiManager) {
-                std::ostringstream oss;
-                // oss << "SELECT * FROM Contracts WHERE id IN (";
-                oss << "SELECT KOSGU.code, KOSGU.name, "
-                       "ROUND(SUM(PaymentDetails.amount),2), COUNT(DISTINCT "
-                       "contracts.id) FROM PaymentDetails inner join Contracts "
-                       "on PaymentDetails.contract_id=contracts.id inner join "
-                       "KOSGU on PaymentDetails.kosgu_id=KOSGU.id inner join "
-                       "Payments on PaymentDetails.payment_id=Payments.id "
-                       "inner join Counterparties on "
-                       "Contracts.counterparty_id=Counterparties.id WHERE "
-                       "Contracts.is_found=true GROUP BY "
-                       "KOSGU.code";
-
                 uiManager->CreateSpecialQueryView("Отчет по договорам для акта",
-                                                  oss.str());
+                                                  BuildActTotalsQuery());
             }
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_PRINT " Печать итогов для акта")) {
+            PrintActTotalsReport();
+        }
+
+        if (!printStatus.empty()) {
+            ImGui::TextWrapped("%s", printStatus.c_str());
         }
 
         if (CustomWidgets::ConfirmationModal(
@@ -639,9 +809,7 @@ void ContractsView::Render() {
                 }
                 dbManager->deleteContract(contract_id_to_delete);
                 RefreshData();
-                selectedContract = Contract{};
-                originalContract = Contract{};
-                selectedContractIndex = -1; // Reset selection
+                ClearContractSelection();
             }
             contract_id_to_delete = -1;
         }
@@ -704,6 +872,7 @@ void ContractsView::Render() {
         if (filter_changed) {
             SaveChanges();
             UpdateFilteredContracts();
+            ReconcileSelectionAfterFilter();
         }
 
         // --- Групповые операции ---
@@ -810,13 +979,13 @@ void ContractsView::Render() {
 
                     int contract_id = m_filtered_contracts[i].id;
 
-                    bool is_selected = (selectedContractIndex == i);
+                    bool is_selected = (selectedContract.id == contract_id);
                     char label[256];
                     sprintf(label, "%d##%d", m_filtered_contracts[i].id, i);
                     if (ImGui::Selectable(
                             label, is_selected,
                             ImGuiSelectableFlags_SpanAllColumns)) {
-                        if (selectedContractIndex != i) {
+                        if (selectedContract.id != contract_id) {
                             SaveChanges();
                             // Обновляем contracts из БД
                             if (dbManager) {
@@ -828,18 +997,10 @@ void ContractsView::Render() {
                                 // Находим новую строку в отсортированном списке
                                 for (int j = 0; j < (int)m_filtered_contracts.size(); j++) {
                                     if (m_filtered_contracts[j].id == contract_id) {
-                                        selectedContractIndex = j;
-                                        selectedContract = m_filtered_contracts[j];
-                                        originalContract = selectedContract;
+                                        SelectContractAtFilteredIndex(j);
                                         break;
                                     }
                                 }
-                                isAdding = false;
-                                isDirty = false;
-                                m_sorted_payment_info.clear();
-                                payment_info =
-                                    dbManager->getPaymentInfoForContract(
-                                        selectedContract.id);
                             }
                             need_to_break = true;
                         }
@@ -900,7 +1061,7 @@ void ContractsView::Render() {
         CustomWidgets::HorizontalSplitter("h_splitter", &list_view_height);
 
         // Редактор
-        if ((selectedContractIndex != -1 && selectedContractIndex < (int)contracts.size()) || isAdding) {
+        if (selectedContract.id > 0 || isAdding) {
             ImGui::BeginChild("ContractEditor", ImVec2(editor_width, 0), true);
 
             if (isAdding) {
@@ -1089,8 +1250,7 @@ void ContractsView::Render() {
                     }
                     url = template_url;
                 }
-                std::string command = "xdg-open \"" + url + "\"";
-                system(command.c_str());
+                platformOpenOrLog(url, "URL");
             }
             ImGui::EndDisabled();
 

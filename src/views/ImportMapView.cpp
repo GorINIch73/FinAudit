@@ -1,6 +1,7 @@
 #include "ImportMapView.h"
 #include "../IconsFontAwesome6.h"
 #include "../ImportManager.h"
+#include "../PlatformUtils.h"
 #include "../UIManager.h"
 #include "imgui.h"
 #include "imgui_stdlib.h"
@@ -134,7 +135,8 @@ void ImportMapView::ReadPreviewData() {
     if (importFilePath.empty())
         return;
 
-    std::ifstream file(importFilePath);
+    std::ifstream file;
+    platformOpenInputFile(file, importFilePath);
     if (!file.is_open()) {
         std::cerr << "ERROR: Could not open file for reading header: "
                   << importFilePath << std::endl;
