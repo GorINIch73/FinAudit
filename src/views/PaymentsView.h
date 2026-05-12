@@ -35,6 +35,8 @@ private:
     void ClearPaymentSelection();
     void SelectPaymentAtFilteredIndex(int index);
     void ReconcileSelectionAfterFilter();
+    void ReconcileSelectionAfterRefresh(int previous_detail_id,
+                                        int previous_jo4_document_id);
 
     UIManager* uiManager = nullptr;
     std::vector<Payment> payments;

@@ -11,6 +11,7 @@ struct ContractExportData {
     std::string kosgu_codes; // Comma-separated list
     bool is_for_special_control;
     std::string note;
+    double contract_amount = 0.0;
     std::string procurement_code; // ИКЗ
 };
 

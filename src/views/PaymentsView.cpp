@@ -134,15 +134,11 @@ static std::string normalize_contract_date_for_bank_dialog(
     size_t last = value.find_last_not_of(" \n\r\t");
     std::string date = value.substr(first, last - first + 1);
 
-    size_t time_separator = date.find_first_of(" T;");
-    if (time_separator != std::string::npos) {
-        date = date.substr(0, time_separator);
-    }
-
     std::smatch match;
     try {
-        std::regex ymd_regex("^(\\d{4})[./-](\\d{1,2})[./-](\\d{1,2})$");
-        if (std::regex_match(date, match, ymd_regex) && match.size() == 4) {
+        std::regex ymd_regex(
+            "^(\\d{4})\\s*[./-]\\s*(\\d{1,2})\\s*[./-]\\s*(\\d{1,2})");
+        if (std::regex_search(date, match, ymd_regex) && match.size() == 4) {
             int year = std::stoi(match[1].str());
             int month = std::stoi(match[2].str());
             int day = std::stoi(match[3].str());
@@ -155,8 +151,9 @@ static std::string normalize_contract_date_for_bank_dialog(
             }
         }
 
-        std::regex dmy_regex("^(\\d{1,2})[./-](\\d{1,2})[./-](\\d{2,4})$");
-        if (std::regex_match(date, match, dmy_regex) && match.size() == 4) {
+        std::regex dmy_regex(
+            "^(\\d{1,2})\\s*[./-]\\s*(\\d{1,2})\\s*[./-]\\s*(\\d{2,4})");
+        if (std::regex_search(date, match, dmy_regex) && match.size() == 4) {
             int day = std::stoi(match[1].str());
             int month = std::stoi(match[2].str());
             int year = std::stoi(match[3].str());
@@ -178,6 +175,18 @@ static std::string normalize_contract_date_for_bank_dialog(
     }
 
     return date;
+}
+
+static std::string normalize_contract_number_from_regex(
+    const std::string &value) {
+    std::string result;
+    result.reserve(value.size());
+    for (unsigned char c : value) {
+        if (!std::isspace(c)) {
+            result.push_back(static_cast<char>(c));
+        }
+    }
+    return result;
 }
 
 static std::vector<PaymentDocumentReference> extract_payment_document_references(
@@ -283,13 +292,13 @@ void PaymentsView::SetPdfReporter(PdfReporter *reporter) {
 
 void PaymentsView::RefreshData() {
     if (dbManager) {
+        const int previous_detail_id = selectedDetail.id;
+        const int previous_jo4_document_id = selectedJo4DocumentId;
         payments = dbManager->getPayments();
         UpdateFilteredPayments(); // Ensure the filter is applied to the new
                                   // data
-        selectedPaymentIndex = -1;
-        paymentDetails.clear();
-        selectedDetailIndex = -1;
-        InvalidateJo4Cache();
+        ReconcileSelectionAfterRefresh(previous_detail_id,
+                                       previous_jo4_document_id);
     }
 }
 
@@ -461,6 +470,62 @@ void PaymentsView::ReconcileSelectionAfterFilter() {
             InvalidateJo4Cache();
             return;
         }
+    }
+
+    ClearPaymentSelection();
+}
+
+void PaymentsView::ReconcileSelectionAfterRefresh(int previous_detail_id,
+                                                  int previous_jo4_document_id) {
+    if (selectedPayment.id <= 0) {
+        selectedPaymentIndex = -1;
+        paymentDetails.clear();
+        selectedDetail = PaymentDetail{};
+        originalDetail = PaymentDetail{};
+        selectedDetailIndex = -1;
+        selectedJo4DocumentId = -1;
+        InvalidateJo4Cache();
+        return;
+    }
+
+    for (int i = 0; i < static_cast<int>(m_filtered_payments.size()); ++i) {
+        if (m_filtered_payments[i].id != selectedPayment.id) {
+            continue;
+        }
+
+        selectedPaymentIndex = i;
+        selectedPayment = m_filtered_payments[i];
+        originalPayment = selectedPayment;
+        recipientBuffer = selectedPayment.recipient;
+        descriptionBuffer = selectedPayment.description;
+        noteBuffer = selectedPayment.note;
+
+        paymentDetails = dbManager ? dbManager->getPaymentDetails(selectedPayment.id)
+                                   : std::vector<PaymentDetail>();
+        selectedDetail = PaymentDetail{};
+        originalDetail = PaymentDetail{};
+        selectedDetailIndex = -1;
+
+        if (previous_detail_id > 0) {
+            for (int detail_index = 0;
+                 detail_index < static_cast<int>(paymentDetails.size());
+                 ++detail_index) {
+                if (paymentDetails[detail_index].id == previous_detail_id) {
+                    selectedDetailIndex = detail_index;
+                    selectedDetail = paymentDetails[detail_index];
+                    originalDetail = paymentDetails[detail_index];
+                    break;
+                }
+            }
+        }
+
+        selectedJo4DocumentId = previous_jo4_document_id;
+        isAdding = false;
+        isDirty = false;
+        isAddingDetail = false;
+        isDetailDirty = false;
+        InvalidateJo4Cache();
+        return;
     }
 
     ClearPaymentSelection();
@@ -1229,6 +1294,9 @@ void PaymentsView::Render() {
                                 extracted_number.erase(
                                     0, extracted_number.find_first_not_of(
                                            " \n\r\t"));
+                                extracted_number =
+                                    normalize_contract_number_from_regex(
+                                        extracted_number);
                                 extracted_date.erase(
                                     extracted_date.find_last_not_of(" \n\r\t") +
                                     1);
@@ -1352,14 +1420,69 @@ void PaymentsView::Render() {
                     !extracted_date.empty() &&
                     extracted_number != "Не найдено" &&
                     extracted_number != "Ошибка Regex") {
+                    int contract_id_to_set = -1;
                     if (dbManager && entity_to_create == 0) {
+                        extracted_number =
+                            normalize_contract_number_from_regex(
+                                extracted_number);
                         extracted_date =
                             normalize_contract_date_for_bank_dialog(
                                 extracted_date);
-                        Contract new_contract = {
-                            -1, extracted_number, extracted_date,
-                            selectedPayment.counterparty_id, 0.0};
-                        dbManager->addContract(new_contract);
+                        contract_id_to_set = dbManager->getContractIdByNumberDate(
+                            extracted_number, extracted_date);
+                        if (contract_id_to_set == -1) {
+                            Contract new_contract = {
+                                -1, extracted_number, extracted_date,
+                                selectedPayment.counterparty_id, 0.0};
+                            contract_id_to_set = dbManager->addContract(new_contract);
+                        }
+
+                        contractsForDropdown = dbManager->getContracts();
+
+                        if (contract_id_to_set != -1) {
+                            if (selectedDetail.id > 0) {
+                                selectedDetail.contract_id = contract_id_to_set;
+                                isDetailDirty = true;
+                                SaveDetailChanges();
+                            } else if (selectedPayment.id > 0) {
+                                PaymentDetail newDetail;
+                                newDetail.payment_id = selectedPayment.id;
+                                newDetail.amount = selectedPayment.amount;
+                                newDetail.contract_id = contract_id_to_set;
+                                if (dbManager->addPaymentDetail(newDetail)) {
+                                    selectedDetail = newDetail;
+                                    originalDetail = newDetail;
+                                    selectedDetailIndex = -1;
+                                    paymentDetails = dbManager->getPaymentDetails(
+                                        selectedPayment.id);
+                                    for (int i = 0;
+                                         i < static_cast<int>(paymentDetails.size());
+                                         ++i) {
+                                        if (paymentDetails[i].id == newDetail.id) {
+                                            selectedDetailIndex = i;
+                                            selectedDetail = paymentDetails[i];
+                                            originalDetail = paymentDetails[i];
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            paymentDetails =
+                                dbManager->getPaymentDetails(selectedPayment.id);
+                            if (selectedDetail.id > 0) {
+                                for (int i = 0;
+                                     i < static_cast<int>(paymentDetails.size());
+                                     ++i) {
+                                    if (paymentDetails[i].id == selectedDetail.id) {
+                                        selectedDetailIndex = i;
+                                        selectedDetail = paymentDetails[i];
+                                        originalDetail = paymentDetails[i];
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     show_create_from_desc_popup = false;
@@ -2366,6 +2489,7 @@ void PaymentsView::ProcessGroupOperation() {
                                          1);
                             number.erase(0,
                                          number.find_first_not_of(" \n\r\t"));
+                            number = normalize_contract_number_from_regex(number);
                             date.erase(date.find_last_not_of(" \n\r\t") + 1);
                             date.erase(0, date.find_first_not_of(" \n\r\t"));
                             date = normalize_contract_date_for_bank_dialog(date);

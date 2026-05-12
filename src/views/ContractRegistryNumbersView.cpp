@@ -4,6 +4,7 @@
 #include "../IconsFontAwesome6.h"
 #include "imgui.h"
 #include "ImGuiFileDialog.h"
+#include <filesystem>
 #include <thread>
 
 ContractRegistryNumbersView::ContractRegistryNumbersView() {
@@ -25,6 +26,20 @@ void ContractRegistryNumbersView::Reset() {
     m_ikzImportStarted = false;
     m_showUnfoundContracts = false;
     m_lastExportCount = -1;
+}
+
+std::string ContractRegistryNumbersView::GetDatabaseDirectory() const {
+    if (!uiManager || uiManager->currentDbPath.empty()) {
+        return ".";
+    }
+
+    std::filesystem::path dbPath(uiManager->currentDbPath);
+    std::filesystem::path parent = dbPath.parent_path();
+    if (parent.empty()) {
+        return ".";
+    }
+
+    return parent.string();
 }
 
 void ContractRegistryNumbersView::StartIKZImport(const std::string& filePath, ImportManager* importManager,
@@ -108,7 +123,7 @@ void ContractRegistryNumbersView::Render() {
 
         if (ImGui::Button(ICON_FA_FILE_IMPORT " Импортировать реестровые номера")) {
             IGFD::FileDialogConfig config;
-            config.path = ".";
+            config.path = GetDatabaseDirectory();
             config.countSelectionMax = 1;
             config.userDatas = IGFD::UserDatas(nullptr);
             ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey_IKZ_Service", "Выберите файл с реестровыми номерами контрактов", ".csv,.tsv", config);
@@ -163,7 +178,7 @@ void ContractRegistryNumbersView::Render() {
         if (ImGui::Button(ICON_FA_FILE_EXPORT " Экспортировать реестровые номера")) {
             m_lastExportCount = -1; // Reset on new export
             IGFD::FileDialogConfig config;
-            config.path = ".";
+            config.path = GetDatabaseDirectory();
             config.countSelectionMax = 1;
             config.userDatas = IGFD::UserDatas(nullptr);
             ImGuiFileDialog::Instance()->OpenDialog("ExportContractsDlgKey", "Экспорт реестровых номеров контрактов", ".csv", config);

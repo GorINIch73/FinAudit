@@ -65,6 +65,73 @@ static std::string trim(const std::string &str) {
     return str.substr(first, (last - first + 1));
 }
 
+static std::string removeWhitespace(const std::string &str) {
+    std::string result;
+    result.reserve(str.size());
+    for (unsigned char c : str) {
+        if (!std::isspace(c)) {
+            result.push_back(static_cast<char>(c));
+        }
+    }
+    return result;
+}
+
+static void strip_invisible_prefix(std::string &str) {
+    while (!str.empty()) {
+        unsigned char c0 = static_cast<unsigned char>(str[0]);
+        // UTF-8 BOM (EF BB BF) - U+FEFF
+        if (str.size() >= 3 && c0 == 0xEF &&
+            static_cast<unsigned char>(str[1]) == 0xBB &&
+            static_cast<unsigned char>(str[2]) == 0xBF) {
+            str.erase(0, 3);
+        }
+        // Non-breaking space U+00A0 (C2 A0)
+        else if (str.size() >= 2 && c0 == 0xC2 &&
+                 static_cast<unsigned char>(str[1]) == 0xA0) {
+            str.erase(0, 2);
+        }
+        // U+2000..U+200F (E2 80 80 .. E2 80 8F)
+        else if (str.size() >= 3 && c0 == 0xE2 &&
+                 static_cast<unsigned char>(str[1]) == 0x80 &&
+                 static_cast<unsigned char>(str[2]) >= 0x80 &&
+                 static_cast<unsigned char>(str[2]) <= 0x8F) {
+            str.erase(0, 3);
+        }
+        // U+202F NARROW NO-BREAK SPACE (E2 80 AF)
+        else if (str.size() >= 3 && c0 == 0xE2 &&
+                 static_cast<unsigned char>(str[1]) == 0x80 &&
+                 static_cast<unsigned char>(str[2]) == 0xAF) {
+            str.erase(0, 3);
+        }
+        // U+205F MEDIUM MATHEMATICAL SPACE (E2 81 9F)
+        else if (str.size() >= 3 && c0 == 0xE2 &&
+                 static_cast<unsigned char>(str[1]) == 0x81 &&
+                 static_cast<unsigned char>(str[2]) == 0x9F) {
+            str.erase(0, 3);
+        } else if (std::isspace(c0)) {
+            str.erase(0, 1);
+        } else {
+            break;
+        }
+    }
+}
+
+static std::string clean_import_field(std::string value) {
+    value = trim(value);
+    strip_invisible_prefix(value);
+    return trim(value);
+}
+
+static bool headerContainsAny(const std::string &header,
+                              const std::vector<std::string> &needles) {
+    for (const auto &needle : needles) {
+        if (header.find(needle) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Helper to safely get a value from a row based on the mapping
 static std::string get_value_from_row(const std::vector<std::string> &row,
                                       const ColumnMapping &mapping,
@@ -82,28 +149,41 @@ static std::string get_value_from_row(const std::vector<std::string> &row,
 
 // Helper function to convert DD.MM.YY or DD.MM.YYYY to YYYY-MM-DD
 static std::string convertDateToDBFormat(const std::string &date_str_in) {
-    std::string date_str = date_str_in;
-    
-    // Удаляем время (разделители: пробел, 'T', точка с запятой и др.)
-    size_t delim_pos = date_str.find_first_of(" \tT;");
-    if (delim_pos != std::string::npos) {
-        date_str = date_str.substr(0, delim_pos);
+    std::string date_str = trim(date_str_in);
+
+    std::smatch match;
+    try {
+        std::regex dmy_regex(
+            "^(\\d{1,2})\\s*[.\\/-]\\s*(\\d{1,2})\\s*[.\\/-]\\s*(\\d{2,4})");
+        if (std::regex_search(date_str, match, dmy_regex) &&
+            match.size() == 4) {
+            std::string year = match[3].str();
+            if (year.length() == 2) {
+                int year_int = std::stoi(year);
+                year = (year_int > 50) ? "19" + year : "20" + year;
+            }
+
+            char buffer[11];
+            snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d",
+                     std::stoi(year), std::stoi(match[2].str()),
+                     std::stoi(match[1].str()));
+            return buffer;
+        }
+
+        std::regex ymd_regex(
+            "^(\\d{4})\\s*[.\\/-]\\s*(\\d{1,2})\\s*[.\\/-]\\s*(\\d{1,2})");
+        if (std::regex_search(date_str, match, ymd_regex) &&
+            match.size() == 4) {
+            char buffer[11];
+            snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d",
+                     std::stoi(match[1].str()), std::stoi(match[2].str()),
+                     std::stoi(match[3].str()));
+            return buffer;
+        }
+    } catch (const std::exception &) {
+        return date_str;
     }
 
-    if (date_str.length() == 10 && date_str[2] == '.' &&
-        date_str[5] == '.') { // DD.MM.YYYY
-        return date_str.substr(6, 4) + "-" + date_str.substr(3, 2) + "-" +
-               date_str.substr(0, 2);
-    } else if (date_str.length() == 8 && date_str[2] == '.' &&
-               date_str[5] == '.') { // DD.MM.YY
-        std::string year_short = date_str.substr(6, 2);
-        int year_int = std::stoi(year_short);
-        std::string full_year = (year_int > 50)
-                                    ? "19" + year_short
-                                    : "20" + year_short; // Heuristic
-        return full_year + "-" + date_str.substr(3, 2) + "-" +
-               date_str.substr(0, 2);
-    }
     return date_str; // Return as is if format is unexpected
 }
 
@@ -404,7 +484,8 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
         if (std::regex_search(payment.description, contract_matches,
                               contract_regex)) {
             if (contract_matches.size() >= 3) {
-                std::string contract_number = contract_matches[1].str();
+                std::string contract_number =
+                    removeWhitespace(contract_matches[1].str());
                 std::string contract_date_db_format =
                     convertDateToDBFormat(contract_matches[2].str());
                 current_contract_id = get_or_create_contract_id(
@@ -561,7 +642,31 @@ bool ImportManager::importIKZFromFile(
     unfoundContracts.clear();
     successfulImports = 0;
     std::string line;
-    std::getline(file, line); // Skip header line
+    std::getline(file, line); // Header line
+
+    int number_col = 0;
+    int date_col = 1;
+    int ikz_col = 2;
+    int amount_col = -1;
+
+    std::vector<std::string> header = split(line, delimiter);
+    for (int i = 0; i < static_cast<int>(header.size()); ++i) {
+        std::string cell = clean_import_field(header[i]);
+        if (headerContainsAny(cell, {"Номер договора", "Номер контракта",
+                                     "номер договора", "номер контракта"})) {
+            number_col = i;
+        } else if (headerContainsAny(cell, {"Дата договора", "Дата контракта",
+                                            "дата договора", "дата контракта"})) {
+            date_col = i;
+        } else if (headerContainsAny(cell, {"ИКЗ", "икз", "Код закупки",
+                                            "код закупки", "Реестровый номер",
+                                            "реестровый номер"})) {
+            ikz_col = i;
+        } else if (headerContainsAny(cell, {"Сумма договора", "Сумма контракта",
+                                            "сумма договора", "сумма контракта"})) {
+            amount_col = i;
+        }
+    }
 
     DatabaseManager::TransactionGuard transaction(*dbManager);
     if (!transaction.started()) {
@@ -583,67 +688,32 @@ bool ImportManager::importIKZFromFile(
 
         std::vector<std::string> row = split(line, delimiter);
 
-        if (row.size() < 3) continue; // Skip malformed lines
+        int max_required_col = std::max({number_col, date_col, ikz_col});
+        if (max_required_col < 0 ||
+            row.size() <= static_cast<size_t>(max_required_col)) {
+            continue; // Skip malformed lines
+        }
 
-        std::string contract_number = trim(row[0]);
-        std::string contract_date_raw = trim(row[1]);
-        std::string ikz = trim(row[2]);
-
-        // Функция для очистки невидимых символов из начала строки
-        auto strip_invisible_chars = [](std::string& str) {
-            while (!str.empty()) {
-                unsigned char c0 = static_cast<unsigned char>(str[0]);
-                // UTF-8 BOM (EF BB BF) - U+FEFF
-                if (str.size() >= 3 && c0 == 0xEF &&
-                    static_cast<unsigned char>(str[1]) == 0xBB &&
-                    static_cast<unsigned char>(str[2]) == 0xBF) {
-                    str.erase(0, 3);
-                }
-                // Неразрывный пробел U+00A0 (C2 A0)
-                else if (str.size() >= 2 && c0 == 0xC2 &&
-                         static_cast<unsigned char>(str[1]) == 0xA0) {
-                    str.erase(0, 2);
-                }
-                // U+2000..U+200F (E2 80 80 .. E2 80 8F)
-                else if (str.size() >= 3 && c0 == 0xE2 &&
-                         static_cast<unsigned char>(str[1]) == 0x80 &&
-                         static_cast<unsigned char>(str[2]) >= 0x80 &&
-                         static_cast<unsigned char>(str[2]) <= 0x8F) {
-                    str.erase(0, 3);
-                }
-                // U+202F NARROW NO-BREAK SPACE (E2 80 AF)
-                else if (str.size() >= 3 && c0 == 0xE2 &&
-                         static_cast<unsigned char>(str[1]) == 0x80 &&
-                         static_cast<unsigned char>(str[2]) == 0xAF) {
-                    str.erase(0, 3);
-                }
-                // U+205F MEDIUM MATHEMATICAL SPACE (E2 81 9F)
-                else if (str.size() >= 3 && c0 == 0xE2 &&
-                         static_cast<unsigned char>(str[1]) == 0x81 &&
-                         static_cast<unsigned char>(str[2]) == 0x9F) {
-                    str.erase(0, 3);
-                }
-                // Обычные ASCII пробелы
-                else if (std::isspace(c0)) {
-                    str.erase(0, 1);
-                }
-                else {
-                    break;
-                }
-            }
-        };
-
-        // Очищаем номер договора и ИКЗ от невидимых символов
-        strip_invisible_chars(contract_number);
-        strip_invisible_chars(ikz);
+        std::string contract_number = clean_import_field(row[number_col]);
+        std::string contract_date_raw = clean_import_field(row[date_col]);
+        std::string ikz = clean_import_field(row[ikz_col]);
 
         if (contract_number.empty() || contract_date_raw.empty() || ikz.empty()) {
             continue; // Skip lines with essential missing data
         }
 
         std::string contract_date = convertDateToDBFormat(contract_date_raw);
+        double contract_amount = 0.0;
+        bool has_contract_amount = false;
+        if (amount_col >= 0 && row.size() > static_cast<size_t>(amount_col)) {
+            std::string amount_raw = clean_import_field(row[amount_col]);
+            has_contract_amount =
+                !amount_raw.empty() && parseAmount(amount_raw, contract_amount);
+        }
 
-        int updated_count = dbManager->updateContractProcurementCode(contract_number, contract_date, ikz);
+        int updated_count = dbManager->updateContractProcurementCodeAndAmount(
+            contract_number, contract_date, ikz, has_contract_amount,
+            contract_amount);
         if (updated_count > 0) {
             successfulImports += updated_count;
         } else {

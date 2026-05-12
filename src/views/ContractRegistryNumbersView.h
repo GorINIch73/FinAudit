@@ -31,6 +31,7 @@ public:
 
 private:
     void Reset();
+    std::string GetDatabaseDirectory() const;
 
     UIManager* uiManager = nullptr;
     ExportManager* exportManager = nullptr;

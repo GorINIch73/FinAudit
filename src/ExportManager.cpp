@@ -1,7 +1,9 @@
 #include "ExportManager.h"
 #include "PlatformUtils.h"
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 
 // Helper to escape CSV fields if they contain quotes or commas
 static std::string escape_csv(const std::string& s) {
@@ -18,6 +20,12 @@ static std::string escape_csv(const std::string& s) {
         return escaped;
     }
     return s;
+}
+
+static std::string format_amount(double amount) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2) << amount;
+    return oss.str();
 }
 
 
@@ -48,6 +56,7 @@ int ExportManager::ExportContractsForChecking(const std::string& filepath) {
          << "\"Коды КОСГУ\","
          << "\"Признак усиленного контроля\","
          << "\"Примечание\","
+         << "\"Сумма договора\","
          << "\"ИКЗ\"\n";
 
     int index = 1;
@@ -59,6 +68,7 @@ int ExportManager::ExportContractsForChecking(const std::string& filepath) {
              << escape_csv(contract.kosgu_codes) << ","
              << (contract.is_for_special_control ? "\"Да\"" : "\"Нет\"") << ","
              << escape_csv(contract.note) << ","
+             << escape_csv(format_amount(contract.contract_amount)) << ","
              << escape_csv("\xE2\x80\x8B" + contract.procurement_code) << "\n"; // Prepend ZWSP
     }
 

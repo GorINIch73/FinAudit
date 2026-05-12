@@ -76,6 +76,7 @@ public:
     int addContract(Contract& contract); // Pass by reference to get the id back
     int getContractIdByNumberDate(const std::string& number, const std::string& date);
     int updateContractProcurementCode(const std::string& number, const std::string& date, const std::string& procurement_code);
+    int updateContractProcurementCodeAndAmount(const std::string& number, const std::string& date, const std::string& procurement_code, bool has_contract_amount, double contract_amount);
     bool updateContractProcurementCode(int contract_id, const std::string& procurement_code);
     std::vector<Contract> getContracts();
     bool updateContract(const Contract& contract);
