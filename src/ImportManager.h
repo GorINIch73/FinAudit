@@ -36,6 +36,7 @@ public:
     bool importIKZFromFile(
         const std::string& filepath,
         DatabaseManager* dbManager,
+        const ColumnMapping& mapping,
         std::vector<UnfoundContract>& unfoundContracts,
         int& successfulImports,
         std::atomic<float>& progress,

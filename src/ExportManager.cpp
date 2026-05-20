@@ -57,7 +57,7 @@ int ExportManager::ExportContractsForChecking(const std::string& filepath) {
          << "\"Признак усиленного контроля\","
          << "\"Примечание\","
          << "\"Сумма договора\","
-         << "\"ИКЗ\"\n";
+         << "\"Реестровый номер\"\n";
 
     int index = 1;
     for (const auto& contract : contracts) {

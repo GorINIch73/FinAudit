@@ -596,6 +596,7 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
 bool ImportManager::importIKZFromFile(
     const std::string& filepath,
     DatabaseManager* dbManager,
+    const ColumnMapping& mapping,
     std::vector<UnfoundContract>& unfoundContracts,
     int& successfulImports,
     std::atomic<float>& progress,
@@ -623,12 +624,8 @@ bool ImportManager::importIKZFromFile(
     std::string first_line;
     if (std::getline(file, first_line)) {
         total_lines = 1 + std::count(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>(), '\n');
-        
-        size_t comma_count = std::count(first_line.begin(), first_line.end(), ',');
-        size_t tab_count = std::count(first_line.begin(), first_line.end(), '\t');
-        if (tab_count > comma_count) {
-            delimiter = '\t';
-        }
+
+        delimiter = detectDelimiter(first_line);
     } else {
         std::lock_guard<std::mutex> lock(message_mutex);
         message = "Файл пуст или нечитаем.";
@@ -649,29 +646,44 @@ bool ImportManager::importIKZFromFile(
     int ikz_col = 2;
     int amount_col = -1;
 
-    std::vector<std::string> header = split(line, delimiter);
-    for (int i = 0; i < static_cast<int>(header.size()); ++i) {
-        std::string cell = clean_import_field(header[i]);
-        if (headerContainsAny(cell, {"Номер договора", "Номер контракта",
-                                     "номер договора", "номер контракта"})) {
-            number_col = i;
-        } else if (headerContainsAny(cell, {"Дата договора", "Дата контракта",
-                                            "дата договора", "дата контракта"})) {
-            date_col = i;
-        } else if (headerContainsAny(cell, {"ИКЗ", "икз", "Код закупки",
-                                            "код закупки", "Реестровый номер",
-                                            "реестровый номер"})) {
-            ikz_col = i;
-        } else if (headerContainsAny(cell, {"Сумма договора", "Сумма контракта",
-                                            "сумма договора", "сумма контракта"})) {
-            amount_col = i;
+    auto mapped_col = [&mapping](const std::string& field, int fallback) {
+        auto it = mapping.find(field);
+        if (it != mapping.end() && it->second >= 0) {
+            return it->second;
+        }
+        return fallback;
+    };
+
+    number_col = mapped_col("Номер договора", number_col);
+    date_col = mapped_col("Дата договора", date_col);
+    ikz_col = mapped_col("Реестровый номер", ikz_col);
+    amount_col = mapped_col("Сумма договора", amount_col);
+
+    if (mapping.empty()) {
+        std::vector<std::string> header = split(line, delimiter);
+        for (int i = 0; i < static_cast<int>(header.size()); ++i) {
+            std::string cell = clean_import_field(header[i]);
+            if (headerContainsAny(cell, {"Номер договора", "Номер контракта",
+                                         "номер договора", "номер контракта"})) {
+                number_col = i;
+            } else if (headerContainsAny(cell, {"Дата договора", "Дата контракта",
+                                                "дата договора", "дата контракта"})) {
+                date_col = i;
+            } else if (headerContainsAny(cell, {"ИКЗ", "икз", "Код закупки",
+                                                "код закупки", "Реестровый номер",
+                                                "реестровый номер"})) {
+                ikz_col = i;
+            } else if (headerContainsAny(cell, {"Сумма договора", "Сумма контракта",
+                                                "сумма договора", "сумма контракта"})) {
+                amount_col = i;
+            }
         }
     }
 
     DatabaseManager::TransactionGuard transaction(*dbManager);
     if (!transaction.started()) {
         std::lock_guard<std::mutex> lock(message_mutex);
-        message = "Ошибка: не удалось начать транзакцию импорта ИКЗ.";
+        message = "Ошибка: не удалось начать транзакцию импорта реестровых номеров.";
         return false;
     }
 
@@ -723,7 +735,7 @@ bool ImportManager::importIKZFromFile(
 
     if (!transaction.commit()) {
         std::lock_guard<std::mutex> lock(message_mutex);
-        message = "Ошибка: не удалось зафиксировать транзакцию импорта ИКЗ.";
+        message = "Ошибка: не удалось зафиксировать транзакцию импорта реестровых номеров.";
         progress = 0.0f;
         return false;
     }

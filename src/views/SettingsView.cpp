@@ -126,11 +126,11 @@ void SettingsView::Render() {
             isDirty = true;
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Используйте {IKZ} как placeholder для номера закупки.\n"
+            ImGui::SetTooltip("Используйте {IKZ} как placeholder для реестрового номера.\n"
                               "Пример: https://zakupki.gov.ru/epz/contract/contractCard/common-info.html?reestrNumber={IKZ}");
         }
 
-        ImGui::Text("Шаблон поиска договора на ГосЗакупках (без ИКЗ)");
+        ImGui::Text("Шаблон поиска договора на ГосЗакупках (без реестрового номера)");
         if (CustomWidgets::InputText("##zakupki_search_url", &currentSettings.zakupki_url_search_template)) {
             isDirty = true;
         }

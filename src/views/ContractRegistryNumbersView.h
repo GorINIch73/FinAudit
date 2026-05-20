@@ -23,14 +23,18 @@ public:
 
     // New methods for dialog handling from UIManager
     void StartIKZImport(const std::string& filePath, ImportManager* importManager,
-                       DatabaseManager* dbManager, std::atomic<float>& progress,
+                       DatabaseManager* dbManager, const ColumnMapping& mapping,
+                       std::atomic<float>& progress,
                        std::string& message, std::mutex& mutex, std::atomic<bool>& isImporting);
+    void OpenImportMapping(const std::string& filePath);
     void StartContractsExport(const std::string& filePath, ExportManager* exportManager,
                              std::atomic<float>& progress, std::string& message,
                              std::mutex& mutex, std::atomic<bool>& isImporting);
 
 private:
     void Reset();
+    void ReadPreviewData();
+    void RenderImportMapping();
     std::string GetDatabaseDirectory() const;
 
     UIManager* uiManager = nullptr;
@@ -41,6 +45,17 @@ private:
     int m_successfulImports = 0;
     bool m_ikzImportStarted = false;
     bool m_showUnfoundContracts = false;
+    std::string m_importFilePath;
+    std::vector<std::string> m_fileHeaders;
+    std::vector<std::vector<std::string>> m_sampleData;
+    std::vector<std::string> m_targetFields = {
+        "Номер договора",
+        "Дата договора",
+        "Реестровый номер",
+        "Сумма договора"
+    };
+    ColumnMapping m_currentMapping;
+    bool m_showImportMapping = false;
 
     // For Contract Export
     int m_lastExportCount = -1;

@@ -861,7 +861,7 @@ void ContractsView::Render() {
         ImGui::PushItemWidth(combo_width);
         const char *filter_items[] = {
             "Все",           "Для проверки", "Усиленный контроль",
-            "С примечанием", "С ИКЗ",        "Подозрительное в платежах",
+            "С примечанием", "С реестровым номером", "Подозрительное в платежах",
             "Ненайденные"};
         if (ImGui::Combo("Фильтр по статусу", &contract_filter_index,
                          filter_items, IM_ARRAYSIZE(filter_items))) {
@@ -917,7 +917,7 @@ void ContractsView::Render() {
                     show_group_operation_confirmation_popup = true;
                 }
             }
-            if (ImGui::Button("Очистить ИКЗ")) {
+            if (ImGui::Button("Очистить реестровый номер")) {
                 if (!m_filtered_contracts.empty() &&
                     current_operation == NONE) {
                     this->on_group_operation_confirm = [this]() {
@@ -945,7 +945,7 @@ void ContractsView::Render() {
             ImGui::TableSetupColumn("Сумма договора", 0, 0.0f, 4);
             ImGui::TableSetupColumn("Сумма платежей", 0, 0.0f, 5);
             ImGui::TableSetupColumn("Дата окончания", 0, 0.0f, 6);
-            ImGui::TableSetupColumn("ИКЗ", 0, 0.0f, 7);
+            ImGui::TableSetupColumn("Реестровый номер", 0, 0.0f, 7);
             ImGui::TableSetupColumn("Примечание", 0, 0.0f, 8);
             ImGui::TableSetupColumn("Проверка", 0, 0.0f, 9);
             ImGui::TableSetupColumn("Контроль", 0, 0.0f, 10);
@@ -1120,7 +1120,7 @@ void ContractsView::Render() {
             snprintf(procurementCodeBuf, sizeof(procurementCodeBuf), "%s",
                      selectedContract.procurement_code.c_str());
             ImGui::SetNextItemWidth(250.0f);
-            if (ImGui::InputText("ИКЗ", procurementCodeBuf,
+            if (ImGui::InputText("Реестровый номер", procurementCodeBuf,
                                  sizeof(procurementCodeBuf))) {
                 selectedContract.procurement_code = procurementCodeBuf;
                 isDirty = true;
@@ -1157,7 +1157,7 @@ void ContractsView::Render() {
                     Settings settings = dbManager->getSettings();
                     std::string template_url = settings.zakupki_url_template;
                     
-                    // Очищаем ИКЗ от невидимых символов
+                    // Очищаем реестровый номер от невидимых символов
                     std::string clean_ikz = selectedContract.procurement_code;
                     while (!clean_ikz.empty()) {
                         unsigned char c0 = static_cast<unsigned char>(clean_ikz[0]);
@@ -1201,7 +1201,7 @@ void ContractsView::Render() {
                         }
                     }
                     
-                    // Заменяем {IKZ} на реальный номер закупки
+                    // Заменяем {IKZ} на реальный реестровый номер
                     size_t pos = template_url.find("{IKZ}");
                     if (pos != std::string::npos) {
                         template_url.replace(pos, 5, clean_ikz);
@@ -1412,7 +1412,7 @@ void ContractsView::UpdateFilteredContracts() {
             }
         }
         break;
-    case 4: // С ИКЗ
+    case 4: // С реестровым номером
         for (const auto &contract : text_filtered_contracts) {
             if (!contract.procurement_code.empty()) {
                 m_filtered_contracts.push_back(contract);

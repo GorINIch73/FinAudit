@@ -749,9 +749,7 @@ void UIManager::HandleFileDialogs() {
             // Find contract registry-number view and trigger import
             for (auto& view : allViews) {
                 if (auto* registryView = dynamic_cast<ContractRegistryNumbersView*>(view.get())) {
-                    registryView->StartIKZImport(filePathName, importManager, dbManager,
-                                               importProgress, importMessage, importMutex,
-                                               isImporting);
+                    registryView->OpenImportMapping(filePathName);
                     break;
                 }
             }

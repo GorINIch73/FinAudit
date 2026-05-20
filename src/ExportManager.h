@@ -12,7 +12,7 @@ struct ContractExportData {
     bool is_for_special_control;
     std::string note;
     double contract_amount = 0.0;
-    std::string procurement_code; // ИКЗ
+    std::string procurement_code; // Реестровый номер
 };
 
 class ExportManager {

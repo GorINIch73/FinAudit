@@ -235,7 +235,7 @@ bool PdfReporter::generateContractsReport(const std::string& filename, const Set
     report_title += "\nОтчет по договорам для проверки";
 
     std::vector<std::string> columns = {
-        "№ Договора", "Дата Договора", "Контрагент", "КОСГУ", "Примечание", "ИКЗ"
+        "№ Договора", "Дата Договора", "Контрагент", "КОСГУ", "Примечание", "Реестровый номер"
     };
 
     std::vector<std::vector<std::string>> rows;
@@ -252,4 +252,3 @@ bool PdfReporter::generateContractsReport(const std::string& filename, const Set
 
     return generatePdfFromTable(filename, report_title, columns, rows);
 }
-
