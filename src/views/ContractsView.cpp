@@ -121,9 +121,11 @@ bool ContractsView::SaveChanges() {
 }
 
 std::string ContractsView::BuildActTotalsQuery() const {
-    return "SELECT KOSGU.code AS 'КОСГУ', KOSGU.name AS 'Наименование', "
-           "ROUND(SUM(PaymentDetails.amount),2) AS 'Сумма', "
-           "COUNT(DISTINCT Contracts.id) AS 'Договоров' "
+    return "WITH contract_kosgu AS ("
+           "SELECT KOSGU.code AS code, KOSGU.name AS name, "
+           "Contracts.id AS contract_id, "
+           "IFNULL(Contracts.contract_amount, 0) AS contract_amount, "
+           "SUM(PaymentDetails.amount) AS payment_amount "
            "FROM PaymentDetails "
            "INNER JOIN Contracts ON PaymentDetails.contract_id = Contracts.id "
            "INNER JOIN KOSGU ON PaymentDetails.kosgu_id = KOSGU.id "
@@ -131,8 +133,16 @@ std::string ContractsView::BuildActTotalsQuery() const {
            "INNER JOIN Counterparties ON "
            "Contracts.counterparty_id = Counterparties.id "
            "WHERE Contracts.is_found = true "
-           "GROUP BY KOSGU.code, KOSGU.name "
-           "ORDER BY KOSGU.code";
+           "GROUP BY KOSGU.code, KOSGU.name, Contracts.id, "
+           "Contracts.contract_amount"
+           ") "
+           "SELECT code AS 'КОСГУ', name AS 'Наименование', "
+           "ROUND(SUM(payment_amount),2) AS 'Сумма', "
+           "ROUND(SUM(contract_amount),2) AS 'Стоимость договоров', "
+           "COUNT(contract_id) AS 'Договоров' "
+           "FROM contract_kosgu "
+           "GROUP BY code, name "
+           "ORDER BY code";
 }
 
 std::string ContractsView::EscapeHtml(const std::string& value) {
@@ -1126,12 +1136,8 @@ void ContractsView::Render() {
                 isDirty = true;
             }
 
-            char noteBuf[512];
-            snprintf(noteBuf, sizeof(noteBuf), "%s",
-                     selectedContract.note.c_str());
-            if (ImGui::InputTextMultiline("Примечание", noteBuf,
-                                          sizeof(noteBuf))) {
-                selectedContract.note = noteBuf;
+            if (CustomWidgets::InputTextMultilineWithWrap(
+                    "Примечание", &selectedContract.note)) {
                 isDirty = true;
             }
 

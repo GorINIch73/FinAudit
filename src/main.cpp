@@ -2,8 +2,10 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
+#include <chrono>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #include "AboutDialog.h" // Include AboutDialog
 #include "DatabaseManager.h"
@@ -23,6 +25,11 @@ static void glfw_error_callback(int error, const char *description) {
 static std::string BuildRiskAnalysisQuery();
 
 int main(int, char **) {
+    constexpr int kMaxFps = 60;
+    constexpr int kIdleFps = 15;
+    constexpr auto kMinFrameTime = std::chrono::duration<double>(1.0 / kMaxFps);
+    constexpr auto kIdleWaitTime = 1.0 / kIdleFps;
+
     // Установка обработчика ошибок GLFW
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) {
@@ -96,8 +103,17 @@ int main(int, char **) {
 
     // Главный цикл приложения
     while (!glfwWindowShouldClose(window)) {
+        const auto frameStart = std::chrono::steady_clock::now();
+        const bool isIdle =
+            uiManager.allViews.empty() && !showAboutDialog &&
+            !uiManager.isImporting && !uiManager.showErrorPopup;
+
         // Обработка событий
-        glfwPollEvents();
+        if (isIdle) {
+            glfwWaitEventsTimeout(kIdleWaitTime);
+        } else {
+            glfwPollEvents();
+        }
         // glfwWaitEventsTimeout(0.033); // ~30 FPS
         // Начало нового кадра ImGui
         ImGui_ImplOpenGL3_NewFrame();
@@ -313,6 +329,11 @@ int main(int, char **) {
 
         // Обновление и отрисовка окна
         glfwSwapBuffers(window);
+
+        const auto frameTime = std::chrono::steady_clock::now() - frameStart;
+        if (frameTime < kMinFrameTime) {
+            std::this_thread::sleep_for(kMinFrameTime - frameTime);
+        }
     }
 
     uiManager.SaveAllViews();
@@ -627,4 +648,3 @@ JOIN SuspiciousWords sw
 ORDER BY risk_score DESC, date DESC, object_id;
 )SQL";
 }
-

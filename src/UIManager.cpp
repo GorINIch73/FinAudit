@@ -780,16 +780,19 @@ void UIManager::Render() {
         view->Render();
     }
 
-    // Remove closed views
-    allViews.erase(std::remove_if(allViews.begin(), allViews.end(),
-                                  [](const std::unique_ptr<BaseView> &view) {
-                                      if (!view->IsVisible) {
-                                          view->OnDeactivate();
-                                          return true;
-                                      }
-                                      return false;
-                                  }),
-                   allViews.end());
+    // Keep views alive during background work: some import/export workers
+    // reference their source view until the operation is finished.
+    if (!isImporting) {
+        allViews.erase(std::remove_if(allViews.begin(), allViews.end(),
+                                      [](const std::unique_ptr<BaseView> &view) {
+                                          if (!view->IsVisible) {
+                                              view->OnDeactivate();
+                                              return true;
+                                          }
+                                          return false;
+                                      }),
+                       allViews.end());
+    }
 
     if (isImporting) {
         ImGui::OpenPopup("Importing...");
