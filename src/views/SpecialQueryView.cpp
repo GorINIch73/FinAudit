@@ -1,9 +1,197 @@
 #include "SpecialQueryView.h"
 #include "../IconsFontAwesome6.h"
+#include "../PlatformUtils.h"
+#include <chrono>
+#include <cctype>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <algorithm>
+
+namespace {
+std::string EscapeHtml(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (char ch : value) {
+        switch (ch) {
+            case '&':
+                escaped += "&amp;";
+                break;
+            case '<':
+                escaped += "&lt;";
+                break;
+            case '>':
+                escaped += "&gt;";
+                break;
+            case '"':
+                escaped += "&quot;";
+                break;
+            case '\'':
+                escaped += "&#39;";
+                break;
+            default:
+                escaped += ch;
+                break;
+        }
+    }
+    return escaped;
+}
+
+std::string TrimCopy(const std::string& value) {
+    const auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char ch) {
+        return std::isspace(ch);
+    });
+    const auto last = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char ch) {
+        return std::isspace(ch);
+    }).base();
+    return first < last ? std::string(first, last) : "";
+}
+
+bool IsAmountLike(const std::string& value) {
+    const std::string trimmed = TrimCopy(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+
+    size_t pos = 0;
+    if (trimmed[pos] == '+' || trimmed[pos] == '-') {
+        ++pos;
+    }
+
+    bool has_integer_digit = false;
+    while (pos < trimmed.size()) {
+        const unsigned char ch = static_cast<unsigned char>(trimmed[pos]);
+        if (std::isdigit(ch)) {
+            has_integer_digit = true;
+            ++pos;
+            continue;
+        }
+        if (std::isspace(ch)) {
+            ++pos;
+            continue;
+        }
+        break;
+    }
+
+    if (!has_integer_digit || pos >= trimmed.size() ||
+        (trimmed[pos] != '.' && trimmed[pos] != ',')) {
+        return false;
+    }
+
+    ++pos;
+    size_t decimal_digits = 0;
+    while (pos < trimmed.size() && std::isdigit(static_cast<unsigned char>(trimmed[pos]))) {
+        ++decimal_digits;
+        ++pos;
+    }
+
+    return decimal_digits == 2 && pos == trimmed.size();
+}
+
+bool NeedsTextPrefixForSpreadsheet(const std::string& value) {
+    const std::string trimmed = TrimCopy(value);
+    if (trimmed.empty() || IsAmountLike(trimmed)) {
+        return false;
+    }
+
+    bool has_digit = false;
+    for (unsigned char ch : trimmed) {
+        if (std::isdigit(ch)) {
+            has_digit = true;
+            continue;
+        }
+        if (std::isspace(ch) || ch == '+' || ch == '-' || ch == '/' ||
+            ch == '\\' || ch == '.' || ch == ',' || ch == ':' || ch == '#') {
+            continue;
+        }
+        return false;
+    }
+    return has_digit;
+}
+
+std::string FormatCellForSpreadsheetCopy(const std::string& value) {
+    static const std::string zero_width_space = "\xE2\x80\x8B";
+    if (NeedsTextPrefixForSpreadsheet(value) && value.rfind(zero_width_space, 0) != 0) {
+        return zero_width_space + value;
+    }
+    return value;
+}
+
+std::string MakePrintableHtml(
+    const std::string& title,
+    const std::vector<std::string>& columns,
+    const std::vector<std::vector<std::string>>& rows,
+    const std::vector<double>& column_totals,
+    const std::vector<bool>& is_numeric_column) {
+    std::ostringstream html;
+    html << "<!doctype html>\n"
+         << "<html lang=\"ru\">\n"
+         << "<head>\n"
+         << "<meta charset=\"utf-8\">\n"
+         << "<title>" << EscapeHtml(title) << "</title>\n"
+         << "<style>\n"
+         << "body{font-family:Arial,sans-serif;margin:24px;color:#111;}\n"
+         << "h1{font-size:20px;margin:0 0 16px;}\n"
+         << ".summary{font-size:13px;margin:0 0 12px;color:#333;}\n"
+         << "table{border-collapse:collapse;width:100%;font-size:12px;}\n"
+         << "th,td{border:1px solid #999;padding:5px 7px;vertical-align:top;}\n"
+         << "th{background:#f1f1f1;text-align:left;}\n"
+         << "tfoot td{font-weight:bold;background:#fafafa;}\n"
+         << "@media print{body{margin:10mm;} table{font-size:10px;} th,td{padding:3px 5px;}}\n"
+         << "</style>\n"
+         << "</head>\n"
+         << "<body>\n"
+         << "<h1>" << EscapeHtml(title) << "</h1>\n"
+         << "<div class=\"summary\">Количество записей: " << rows.size()
+         << "</div>\n"
+         << "<table>\n<thead>\n<tr>";
+
+    for (const auto& column : columns) {
+        html << "<th>" << EscapeHtml(column) << "</th>";
+    }
+    html << "</tr>\n</thead>\n<tbody>\n";
+
+    for (const auto& row : rows) {
+        html << "<tr>";
+        for (size_t col = 0; col < columns.size(); ++col) {
+            const std::string cell = col < row.size() ? row[col] : "";
+            html << "<td>" << EscapeHtml(cell) << "</td>";
+        }
+        html << "</tr>\n";
+    }
+
+    bool has_totals = false;
+    for (size_t col = 0; col < column_totals.size() && col < is_numeric_column.size(); ++col) {
+        if (is_numeric_column[col] && column_totals[col] != 0.0) {
+            has_totals = true;
+            break;
+        }
+    }
+
+    html << "</tbody>\n";
+    if (has_totals) {
+        html << "<tfoot>\n<tr>";
+        for (size_t col = 0; col < columns.size(); ++col) {
+            if (col < is_numeric_column.size() && col < column_totals.size() &&
+                is_numeric_column[col] && column_totals[col] != 0.0) {
+                html << "<td>Итого: " << std::fixed << std::setprecision(2)
+                     << column_totals[col] << "</td>";
+            } else {
+                html << "<td></td>";
+            }
+        }
+        html << "</tr>\n</tfoot>\n";
+    }
+    html << "</table>\n"
+         << "<script>window.addEventListener('load',function(){window.print();});</script>\n"
+         << "</body>\n"
+         << "</html>\n";
+    return html.str();
+}
+}
 
 SpecialQueryView::SpecialQueryView(const std::string& title, const std::string& query)
     : query(query) {
@@ -92,16 +280,21 @@ void SpecialQueryView::Render() {
                         if (j > 0) {
                             ss << "\t";
                         }
-                        ss << queryResult.rows[i][j];
+                        ss << FormatCellForSpreadsheetCopy(queryResult.rows[i][j]);
                     }
                     first_row = false;
                 }
             }
             ImGui::SetClipboardText(ss.str().c_str());
         }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_PRINT " Печать")) {
+            PrintDataAsHtml();
+        }
 
         ImGui::Separator();
         ImGui::Text("Результат:");
+        ImGui::Text("Количество записей: %zu", queryResult.rows.size());
         if (!queryResult.columns.empty()) {
             if (ImGui::BeginChild("##TableScrollRegion", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar)) {
                 if (ImGui::BeginTable("special_query_result", queryResult.columns.size(),
@@ -177,6 +370,30 @@ void SpecialQueryView::Render() {
         }
     }
     ImGui::End();
+}
+
+void SpecialQueryView::PrintDataAsHtml() {
+    if (queryResult.columns.empty()) {
+        return;
+    }
+
+    const auto now = std::chrono::system_clock::now().time_since_epoch().count();
+    const std::filesystem::path output_path =
+        std::filesystem::temp_directory_path() /
+        ("fnaudit_print_" + std::to_string(now) + ".html");
+
+    std::ofstream file;
+    platformOpenOutputFile(file, output_path.string(), std::ios::out | std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Failed to write print HTML: " << output_path << std::endl;
+        return;
+    }
+
+    file << MakePrintableHtml(Title, queryResult.columns, queryResult.rows,
+                              column_totals, is_numeric_column);
+    file.close();
+
+    platformOpenOrLog(output_path.string(), "print HTML");
 }
 
 void SpecialQueryView::SortRows() {

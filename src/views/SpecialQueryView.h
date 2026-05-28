@@ -19,6 +19,7 @@ public:
 
 private:
     void ExecuteQuery();
+    void PrintDataAsHtml();
 
     std::string query;
     struct QueryResult {
