@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 # Определяем проект
-project(FinancialAudit LANGUAGES C CXX)
+project(FinancialAudit VERSION 0.2 LANGUAGES C CXX)
 
 # Устанавливаем префикс установки по умолчанию, если он не задан
 # Это гарантирует, что CMAKE_INSTALL_DATADIR будет абсолютным путем
@@ -167,7 +167,7 @@ install(DIRECTORY data/
 # Установка иконки в стандартную директорию иконок
 install(FILES data/FnAudit.svg
     DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
-    RENAME ${PROJECT_NAME}.svg
+    RENAME FnAudit.svg
 )
 
 # Установка .desktop файла

@@ -96,6 +96,6 @@ class AboutDialog {
         }
 
     private:
-        static constexpr const char *VERSION_NUMBER = "0.1";
+        static constexpr const char *VERSION_NUMBER = "0.2";
         static constexpr const char *BUILD_DATE = __DATE__ " " __TIME__;
 };

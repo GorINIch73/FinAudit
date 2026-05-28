@@ -122,7 +122,7 @@ bool ContractsView::SaveChanges() {
 
 std::string ContractsView::BuildActTotalsQuery() const {
     return "WITH contract_kosgu AS ("
-           "SELECT KOSGU.code AS code, KOSGU.name AS name, "
+           "SELECT IFNULL(KOSGU.kps, '') AS kps, KOSGU.code AS code, KOSGU.name AS name, "
            "Contracts.id AS contract_id, "
            "IFNULL(Contracts.contract_amount, 0) AS contract_amount, "
            "SUM(PaymentDetails.amount) AS payment_amount "
@@ -133,16 +133,16 @@ std::string ContractsView::BuildActTotalsQuery() const {
            "INNER JOIN Counterparties ON "
            "Contracts.counterparty_id = Counterparties.id "
            "WHERE Contracts.is_found = true "
-           "GROUP BY KOSGU.code, KOSGU.name, Contracts.id, "
+           "GROUP BY KOSGU.kps, KOSGU.code, KOSGU.name, Contracts.id, "
            "Contracts.contract_amount"
            ") "
-           "SELECT code AS 'КОСГУ', name AS 'Наименование', "
+           "SELECT kps AS 'КПС', code AS 'КОСГУ', name AS 'Наименование', "
            "ROUND(SUM(payment_amount),2) AS 'Сумма', "
            "ROUND(SUM(contract_amount),2) AS 'Стоимость договоров', "
            "COUNT(contract_id) AS 'Договоров' "
            "FROM contract_kosgu "
-           "GROUP BY code, name "
-           "ORDER BY code";
+           "GROUP BY kps, code, name "
+           "ORDER BY kps, code";
 }
 
 std::string ContractsView::EscapeHtml(const std::string& value) {
@@ -725,6 +725,7 @@ void ContractsView::Render() {
                        ", p.doc_number AS 'Номер платежа' "
                        ", p.amount AS 'Сумма по ПП'"
                        ", pd.amount AS 'Сумма по расшифровке' "
+                       ", k.kps AS 'КПС' "
                        ", k.code AS 'КОСГУ' "
                        ", p.description AS 'Назначение платежа' "
                        ", c.note AS 'Примечание' "
@@ -759,6 +760,7 @@ void ContractsView::Render() {
                     ", p.doc_number AS 'Номер платежа' "
                     ", p.amount AS 'Сумма по ПП'"
                     ", pd.amount AS 'Сумма по расшифровке' "
+                    ", k.kps AS 'КПС' "
                     ", k.code AS 'КОСГУ' "
                     ", p.description AS 'Назначение платежа' "
                     ", c.note AS 'Примечание' "
@@ -1270,15 +1272,16 @@ void ContractsView::Render() {
             ImGui::BeginChild("PaymentDetails", ImVec2(0, 0), true);
             ImGui::Text("Расшифровки платежей:");
             if (ImGui::BeginTable(
-                    "payment_details_table", 5,
+                    "payment_details_table", 6,
                     ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                         ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                         ImGuiTableFlags_ScrollY | ImGuiTableFlags_Sortable)) {
                 ImGui::TableSetupColumn("Дата", ImGuiTableColumnFlags_DefaultSort, 0, 0);
                 ImGui::TableSetupColumn("Номер док.", 0, 0, 1);
                 ImGui::TableSetupColumn("Сумма", 0, 0, 2);
-                ImGui::TableSetupColumn("КОСГУ", 0, 0, 3);
-                ImGui::TableSetupColumn("Назначение", 0, 0, 4);
+                ImGui::TableSetupColumn("КПС", 0, 0, 3);
+                ImGui::TableSetupColumn("КОСГУ", 0, 0, 4);
+                ImGui::TableSetupColumn("Назначение", 0, 0, 5);
                 ImGui::TableHeadersRow();
 
                 if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {
@@ -1297,6 +1300,8 @@ void ContractsView::Render() {
                     ImGui::Text("%s", info.doc_number.c_str());
                     ImGui::TableNextColumn();
                     ImGui::Text("%.2f", info.amount);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", info.kosgu_kps.c_str());
                     ImGui::TableNextColumn();
                     ImGui::Text("%s", info.kosgu_code.c_str());
                     ImGui::TableNextColumn();
@@ -1367,6 +1372,8 @@ void ContractsView::UpdateFilteredContracts() {
                         strcasestr(detail.doc_number.c_str(), filterText) !=
                             nullptr ||
                         strcasestr(detail.description.c_str(), filterText) !=
+                            nullptr ||
+                        strcasestr(detail.kosgu_kps.c_str(), filterText) !=
                             nullptr ||
                         strcasestr(detail.kosgu_code.c_str(), filterText) !=
                             nullptr) {
@@ -1481,10 +1488,13 @@ void ContractsView::SortPaymentInfo(const ImGuiTableSortSpecs* sort_specs) {
                             : (a.amount > b.amount) ? 1
                                                     : 0;
                     break;
-                case 3: // КОСГУ
+                case 3: // КПС
+                    delta = a.kosgu_kps.compare(b.kosgu_kps);
+                    break;
+                case 4: // КОСГУ
                     delta = a.kosgu_code.compare(b.kosgu_code);
                     break;
-                case 4: // Назначение
+                case 5: // Назначение
                     delta = a.description.compare(b.description);
                     break;
                 default:

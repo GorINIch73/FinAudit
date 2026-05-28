@@ -1300,7 +1300,7 @@ DatabaseManager::getPaymentInfoForCounterparty(int counterparty_id) {
         return results;
 
     std::string sql = "SELECT p.date, p.doc_number, pd.amount, p.description, "
-                      "k.code AS kosgu_code "
+                      "k.kps AS kosgu_kps, k.code AS kosgu_code "
                       "FROM Payments p "
                       "LEFT JOIN PaymentDetails pd ON p.id = pd.payment_id "
                       "LEFT JOIN KOSGU k ON pd.kosgu_id = k.id "
@@ -1321,12 +1321,14 @@ DatabaseManager::getPaymentInfoForCounterparty(int counterparty_id) {
         const char *date_text = (const char *)sqlite3_column_text(stmt, 0);
         const char *doc_text = (const char *)sqlite3_column_text(stmt, 1);
         const char *desc_text = (const char *)sqlite3_column_text(stmt, 3);
-        const char *kosgu_text = (const char *)sqlite3_column_text(stmt, 4);
+        const char *kps_text = (const char *)sqlite3_column_text(stmt, 4);
+        const char *kosgu_text = (const char *)sqlite3_column_text(stmt, 5);
 
         info.date = date_text ? date_text : "";
         info.doc_number = doc_text ? doc_text : "";
         info.amount = sqlite3_column_double(stmt, 2);
         info.description = desc_text ? desc_text : "";
+        info.kosgu_kps = kps_text ? kps_text : "";
         info.kosgu_code = kosgu_text ? kosgu_text : "";
         results.push_back(info);
     }
@@ -1715,7 +1717,7 @@ DatabaseManager::getPaymentInfoForContract(int contract_id) {
         return results;
 
     std::string sql =
-        "SELECT p.date, p.doc_number, pd.amount, p.description, k.code "
+        "SELECT p.date, p.doc_number, pd.amount, p.description, k.kps, k.code "
         "FROM Payments p "
         "JOIN PaymentDetails pd ON p.id = pd.payment_id "
         "LEFT JOIN KOSGU k ON pd.kosgu_id = k.id "
@@ -1736,12 +1738,14 @@ DatabaseManager::getPaymentInfoForContract(int contract_id) {
         const char *date_text = (const char *)sqlite3_column_text(stmt, 0);
         const char *doc_text = (const char *)sqlite3_column_text(stmt, 1);
         const char *desc_text = (const char *)sqlite3_column_text(stmt, 3);
-        const char *kosgu_text = (const char *)sqlite3_column_text(stmt, 4);
+        const char *kps_text = (const char *)sqlite3_column_text(stmt, 4);
+        const char *kosgu_text = (const char *)sqlite3_column_text(stmt, 5);
 
         info.date = date_text ? date_text : "";
         info.doc_number = doc_text ? doc_text : "";
         info.amount = sqlite3_column_double(stmt, 2);
         info.description = desc_text ? desc_text : "";
+        info.kosgu_kps = kps_text ? kps_text : "";
         info.kosgu_code = kosgu_text ? kosgu_text : "";
         results.push_back(info);
     }
@@ -1962,7 +1966,7 @@ DatabaseManager::getDecodingForKosgu(int kosgu_id,
         return results;
 
     std::string sql =
-        "SELECT k.code AS kosgu_code, p.date, p.doc_number, pd.amount, "
+        "SELECT k.kps AS kosgu_kps, k.code AS kosgu_code, p.date, p.doc_number, pd.amount, "
         "p.description, c.name AS counterparty_name "
         "FROM PaymentDetails pd "
         "JOIN Payments p ON pd.payment_id = p.id "
@@ -1975,7 +1979,8 @@ DatabaseManager::getDecodingForKosgu(int kosgu_id,
                "LOWER(?) "
                "OR LOWER(pd.amount) LIKE LOWER(?) OR LOWER(p.description) LIKE "
                "LOWER(?) "
-               "OR LOWER(c.name) LIKE LOWER(?) OR LOWER(k.code) LIKE LOWER(?))";
+               "OR LOWER(c.name) LIKE LOWER(?) OR LOWER(k.kps) LIKE LOWER(?) "
+               "OR LOWER(k.code) LIKE LOWER(?))";
     }
 
     sql += ";";
@@ -1991,7 +1996,7 @@ DatabaseManager::getDecodingForKosgu(int kosgu_id,
 
     if (!filterText.empty()) {
         std::string filterParam = "%" + filterText + "%";
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 7; i++) {
             sqlite3_bind_text(stmt, 2 + i, filterParam.c_str(), -1,
                               SQLITE_TRANSIENT);
         }
@@ -1999,17 +2004,19 @@ DatabaseManager::getDecodingForKosgu(int kosgu_id,
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         ContractPaymentInfo info;
-        const char *kosgu_text = (const char *)sqlite3_column_text(stmt, 0);
-        const char *date_text = (const char *)sqlite3_column_text(stmt, 1);
-        const char *doc_text = (const char *)sqlite3_column_text(stmt, 2);
-        const char *desc_text = (const char *)sqlite3_column_text(stmt, 4);
+        const char *kps_text = (const char *)sqlite3_column_text(stmt, 0);
+        const char *kosgu_text = (const char *)sqlite3_column_text(stmt, 1);
+        const char *date_text = (const char *)sqlite3_column_text(stmt, 2);
+        const char *doc_text = (const char *)sqlite3_column_text(stmt, 3);
+        const char *desc_text = (const char *)sqlite3_column_text(stmt, 5);
         const unsigned char *counterparty_name_text =
-            sqlite3_column_text(stmt, 5);
+            sqlite3_column_text(stmt, 6);
 
+        info.kosgu_kps = kps_text ? kps_text : "";
         info.kosgu_code = kosgu_text ? kosgu_text : "";
         info.date = date_text ? date_text : "";
         info.doc_number = doc_text ? doc_text : "";
-        info.amount = sqlite3_column_double(stmt, 3);
+        info.amount = sqlite3_column_double(stmt, 4);
         info.description = desc_text ? desc_text : "";
         info.counterparty_name =
             counterparty_name_text ? (const char *)counterparty_name_text : "";
@@ -2077,6 +2084,8 @@ static int contract_payment_detail_info_select_callback(void *data, int argc,
             info.amount = argv[i] ? std::stod(argv[i]) : 0.0;
         } else if (colName == "description") {
             info.description = argv[i] ? argv[i] : "";
+        } else if (colName == "kosgu_kps") {
+            info.kosgu_kps = argv[i] ? argv[i] : "";
         } else if (colName == "kosgu_code") {
             info.kosgu_code = argv[i] ? argv[i] : "";
         }
@@ -2091,7 +2100,7 @@ std::vector<ContractPaymentInfo> DatabaseManager::getAllContractPaymentInfo() {
         return results;
 
     std::string sql = "SELECT pd.contract_id, p.date, p.doc_number, pd.amount, "
-                      "p.description, k.code AS kosgu_code "
+                      "p.description, k.kps AS kosgu_kps, k.code AS kosgu_code "
                       "FROM PaymentDetails pd "
                       "JOIN Payments p ON pd.payment_id = p.id "
                       "LEFT JOIN KOSGU k ON pd.kosgu_id = k.id "
@@ -2127,6 +2136,8 @@ static int counterparty_payment_detail_info_select_callback(void *data,
             info.amount = argv[i] ? std::stod(argv[i]) : 0.0;
         } else if (colName == "description") {
             info.description = argv[i] ? argv[i] : "";
+        } else if (colName == "kosgu_kps") {
+            info.kosgu_kps = argv[i] ? argv[i] : "";
         } else if (colName == "kosgu_code") {
             info.kosgu_code = argv[i] ? argv[i] : "";
         }
@@ -2142,7 +2153,8 @@ DatabaseManager::getAllCounterpartyPaymentInfo() {
         return results;
 
     std::string sql = "SELECT p.counterparty_id, p.date, p.doc_number, "
-                      "pd.amount, p.description, k.code AS kosgu_code "
+                      "pd.amount, p.description, k.kps AS kosgu_kps, "
+                      "k.code AS kosgu_code "
                       "FROM Payments p "
                       "LEFT JOIN PaymentDetails pd ON p.id = pd.payment_id "
                       "LEFT JOIN KOSGU k ON pd.kosgu_id = k.id "

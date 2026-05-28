@@ -1600,11 +1600,12 @@ void PaymentsView::Render() {
                 "PaymentDetailsList",
                 ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 4), true,
                 ImGuiWindowFlags_HorizontalScrollbar);
-            if (ImGui::BeginTable("payment_details_table", 3,
+            if (ImGui::BeginTable("payment_details_table", 4,
                                   ImGuiTableFlags_Borders |
                                       ImGuiTableFlags_RowBg |
                                       ImGuiTableFlags_Resizable)) {
                 ImGui::TableSetupColumn("Сумма");
+                ImGui::TableSetupColumn("КПС");
                 ImGui::TableSetupColumn("КОСГУ");
                 ImGui::TableSetupColumn("Договор");
                 ImGui::TableHeadersRow();
@@ -1664,15 +1665,17 @@ void PaymentsView::Render() {
 
                     if (!need_to_break) {
                         ImGui::TableNextColumn();
+                        std::string kosguKps;
                         std::string kosguCode = "N/A";
                         for (const auto &k : kosguForDropdown) {
                             if (k.id == paymentDetails[i].kosgu_id) {
-                                kosguCode = k.kps.empty()
-                                                ? k.code
-                                                : k.code + " / " + k.kps;
+                                kosguKps = k.kps;
+                                kosguCode = k.code;
                                 break;
                             }
                         }
+                        ImGui::Text("%s", kosguKps.c_str());
+                        ImGui::TableNextColumn();
                         ImGui::Text("%s", kosguCode.c_str());
 
                         ImGui::TableNextColumn();
