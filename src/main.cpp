@@ -89,13 +89,14 @@ int main(int, char **) {
     uiManager.SetExportManager(&exportManager);
     uiManager.SetWindow(window);
 
+    // Apply usable defaults before opening the last database. If the recent
+    // database was deleted, menus still need a Cyrillic-capable font.
+    uiManager.ApplyTheme(0);
+    uiManager.ApplyFont(24);
+
     // Load initial settings and apply theme
     if (!uiManager.recentDbPaths.empty()) {
         uiManager.LoadDatabase(uiManager.recentDbPaths.front());
-    } else {
-        // Database not opened yet, use default theme and font
-        uiManager.ApplyTheme(0);
-        uiManager.ApplyFont(24);
     }
 
     // Установка стиля ImGui

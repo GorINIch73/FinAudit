@@ -185,6 +185,7 @@ public:
     bool updateRegex(const Regex& regex);
     bool deleteRegex(int id);
     int getRegexIdByName(const std::string& name);
+    bool resetDefaultRegexes();
 
     // Suspicious Words CRUD
     std::vector<SuspiciousWord> getSuspiciousWords();
@@ -202,6 +203,7 @@ public:
     std::vector<IntegrityIssue> getIntegrityReport();
     
     bool executeSelect(const std::string& sql, std::vector<std::string>& columns, std::vector<std::vector<std::string>>& rows);
+    const std::string& getLastError() const { return lastError; }
 
 private:
     bool execute(const std::string& sql);
@@ -210,4 +212,5 @@ private:
     void checkAndUpdateDatabaseSchema();
     
     sqlite3* db;
+    std::string lastError;
 };

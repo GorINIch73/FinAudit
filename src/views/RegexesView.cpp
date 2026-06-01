@@ -157,6 +157,10 @@ void RegexesView::Render() {
             SaveChanges();
             RefreshData();
         }
+        ImGui::SameLine();
+        if (ImGui::Button("Установить по умолчанию")) {
+            show_reset_defaults_popup = true;
+        }
 
         // if (show_delete_popup) {
         // ImGui::OpenPopup("Подтверждение удаления##Regex");
@@ -172,6 +176,19 @@ void RegexesView::Render() {
                 ClearRegexSelection();
             }
             regex_id_to_delete = -1;
+        }
+
+        if (CustomWidgets::ConfirmationModal(
+                "Сброс regex по умолчанию", "Подтверждение сброса",
+                "Стандартные выражения с именами 'Контракты' и 'КОСГУ' будут "
+                "перезаписаны значениями по умолчанию. Пользовательские "
+                "выражения с другими именами не изменятся.",
+                "Установить", "Отмена", show_reset_defaults_popup)) {
+            SaveChanges();
+            if (dbManager && dbManager->resetDefaultRegexes()) {
+                RefreshData();
+                ClearRegexSelection();
+            }
         }
 
         ImGui::Separator();

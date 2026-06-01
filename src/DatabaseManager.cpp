@@ -150,6 +150,18 @@ static bool payment_details_references_invoices(sqlite3 *db) {
     return references_invoices;
 }
 
+static const char *DEFAULT_CONTRACTS_REGEX =
+    "(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
+    "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)"
+    "\\s*(?:N|№)?\\s*"
+    "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?=[0-9])[0-9A-Za-zА-Яа-я/_.-]+){0,4})"
+    "(?:(?!(?:УПД|[Аа]кт|[Сс]чёт|[Сс]чет|[Сс]ч\\.?|[Нн]акладн))[\\s\\S])"
+    "{0,80}?"
+    "(\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|"
+    "\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2})";
+
+static const char *DEFAULT_KOSGU_REGEX = "К(\\d{3})";
+
 bool DatabaseManager::open(const std::string &filepath) {
     if (db) {
         close();
@@ -335,16 +347,16 @@ void DatabaseManager::checkAndUpdateDatabaseSchema() {
         "INSERT OR IGNORE INTO Regexes (name, pattern) VALUES "
         "('Контракты', "
         "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|[Кк]онтракт("
-        "?:у|а|ом)?|[Кк]онтр\\.?|К-т)\\s*(?:N|№)?\\s*"
-        "([0-9A-Za-zА-Яа-я/_-]+(?:\\s+(?=[0-9])[0-9A-Za-zА-Яа-я/_-]+){0,4})"
+        "?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)\\s*(?:N|№)?\\s*"
+        "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?=[0-9])[0-9A-Za-zА-Яа-я/_.-]+){0,4})"
         "(?:(?!(?:УПД|[Аа]кт|[Сс]чёт|[Сс]чет|[Сс]ч\\.?|[Нн]акладн))[\\s\\S]){0,80}?"
         "(\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|"
         "\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2})');");
     execute(
         "UPDATE Regexes SET pattern = "
         "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|[Кк]онтракт("
-        "?:у|а|ом)?|[Кк]онтр\\.?|К-т)\\s*(?:N|№)?\\s*"
-        "([0-9A-Za-zА-Яа-я/_-]+(?:\\s+(?=[0-9])[0-9A-Za-zА-Яа-я/_-]+){0,4})"
+        "?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)\\s*(?:N|№)?\\s*"
+        "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?=[0-9])[0-9A-Za-zА-Яа-я/_.-]+){0,4})"
         "(?:(?!(?:УПД|[Аа]кт|[Сс]чёт|[Сс]чет|[Сс]ч\\.?|[Нн]акладн))[\\s\\S]){0,80}?"
         "(\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|"
         "\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2})' "
@@ -668,10 +680,13 @@ void DatabaseManager::close() {
 }
 
 bool DatabaseManager::execute(const std::string &sql) {
+    lastError.clear();
     char *errmsg = nullptr;
     int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &errmsg);
     if (rc != SQLITE_OK) {
-        std::cerr << "SQL error: " << errmsg << std::endl;
+        lastError = errmsg ? errmsg : sqlite3_errmsg(db);
+        std::cerr << "SQL error: " << lastError << " | SQL: " << sql
+                  << std::endl;
         sqlite3_free(errmsg);
         return false;
     }
@@ -884,8 +899,8 @@ bool DatabaseManager::createDatabase(const std::string &filepath) {
     std::vector<std::string> default_regexes = {
         "INSERT OR IGNORE INTO Regexes (name, pattern) VALUES ('Контракты', "
         "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
-        "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|К-т)\\s*(?:N|№)?\\s*"
-        "([0-9A-Za-zА-Яа-я/_-]+(?:\\s+(?=[0-9])[0-9A-Za-zА-Яа-я/_-]+){0,4})"
+        "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)\\s*(?:N|№)?\\s*"
+        "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?=[0-9])[0-9A-Za-zА-Яа-я/_.-]+){0,4})"
         "(?:(?!(?:УПД|[Аа]кт|[Сс]чёт|[Сс]чет|[Сс]ч\\.?|[Нн]акладн))[\\s\\S]){0,80}?"
         "(\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|"
         "\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2})'"
@@ -902,7 +917,7 @@ bool DatabaseManager::createDatabase(const std::string &filepath) {
 
     if (!execute("UPDATE Regexes SET pattern = "
                  "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
-                 "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|К-т)\\s*(?:N|№)?\\s*"
+                 "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)\\s*(?:N|№)?\\s*"
                  "([^\\s,;]+)\\s*(?:от\\s*)?"
                  "(\\d{1,2}[.\\/-]\\d{1,2}[.\\/-](?:\\d{4}|\\d{2})|"
                  "\\d{4}[.\\/-]\\d{1,2}[.\\/-]\\d{1,2})' "
@@ -1632,22 +1647,82 @@ bool DatabaseManager::updateContract(const Contract &contract) {
 bool DatabaseManager::deleteContract(int id) {
     if (!db)
         return false;
+
+    if (!execute("BEGIN IMMEDIATE;")) {
+        return false;
+    }
+
+    std::string clear_payment_details_sql =
+        "UPDATE PaymentDetails SET contract_id = NULL WHERE contract_id = ?;";
+    sqlite3_stmt *clear_payment_details_stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db, clear_payment_details_sql.c_str(), -1,
+                                &clear_payment_details_stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement for clearing PaymentDetails "
+                     "Contract references: "
+                  << sqlite3_errmsg(db) << std::endl;
+        execute("ROLLBACK;");
+        return false;
+    }
+    sqlite3_bind_int(clear_payment_details_stmt, 1, id);
+
+    int rc_step = sqlite3_step(clear_payment_details_stmt);
+    sqlite3_finalize(clear_payment_details_stmt);
+
+    if (rc_step != SQLITE_DONE) {
+        std::cerr << "Failed to clear PaymentDetails Contract references: "
+                  << sqlite3_errmsg(db) << std::endl;
+        execute("ROLLBACK;");
+        return false;
+    }
+
+    std::string clear_base_docs_sql =
+        "UPDATE BasePaymentDocuments SET contract_id = NULL WHERE contract_id = ?;";
+    sqlite3_stmt *clear_base_docs_stmt = nullptr;
+    rc = sqlite3_prepare_v2(db, clear_base_docs_sql.c_str(), -1,
+                            &clear_base_docs_stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement for clearing "
+                     "BasePaymentDocuments Contract references: "
+                  << sqlite3_errmsg(db) << std::endl;
+        execute("ROLLBACK;");
+        return false;
+    }
+    sqlite3_bind_int(clear_base_docs_stmt, 1, id);
+
+    rc_step = sqlite3_step(clear_base_docs_stmt);
+    sqlite3_finalize(clear_base_docs_stmt);
+
+    if (rc_step != SQLITE_DONE) {
+        std::cerr << "Failed to clear BasePaymentDocuments Contract "
+                     "references: "
+                  << sqlite3_errmsg(db) << std::endl;
+        execute("ROLLBACK;");
+        return false;
+    }
+
     std::string sql = "DELETE FROM Contracts WHERE id = ?;";
     sqlite3_stmt *stmt = nullptr;
-    int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+    rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db)
                   << std::endl;
+        execute("ROLLBACK;");
         return false;
     }
     sqlite3_bind_int(stmt, 1, id);
 
-    int rc_step = sqlite3_step(stmt);
+    rc_step = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 
     if (rc_step != SQLITE_DONE) {
         std::cerr << "Failed to delete Contract entry: " << sqlite3_errmsg(db)
                   << std::endl;
+        execute("ROLLBACK;");
+        return false;
+    }
+    if (!execute("COMMIT;")) {
+        execute("ROLLBACK;");
         return false;
     }
     return true;
@@ -2613,6 +2688,54 @@ int DatabaseManager::getRegexIdByName(const std::string &name) {
     return id;
 }
 
+bool DatabaseManager::resetDefaultRegexes() {
+    if (!db)
+        return false;
+
+    const std::vector<std::pair<std::string, std::string>> defaults = {
+        {"Контракты", DEFAULT_CONTRACTS_REGEX},
+        {"КОСГУ", DEFAULT_KOSGU_REGEX},
+    };
+
+    TransactionGuard transaction(*this);
+    if (!transaction.started()) {
+        return false;
+    }
+
+    const char *sql =
+        "INSERT INTO Regexes (name, pattern) VALUES (?, ?) "
+        "ON CONFLICT(name) DO UPDATE SET pattern = excluded.pattern;";
+    sqlite3_stmt *stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        lastError = sqlite3_errmsg(db);
+        std::cerr << "Failed to prepare statement for resetDefaultRegexes: "
+                  << lastError << std::endl;
+        transaction.rollback();
+        return false;
+    }
+
+    for (const auto &entry : defaults) {
+        sqlite3_reset(stmt);
+        sqlite3_clear_bindings(stmt);
+        sqlite3_bind_text(stmt, 1, entry.first.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, entry.second.c_str(), -1, SQLITE_TRANSIENT);
+
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            lastError = sqlite3_errmsg(db);
+            std::cerr << "Failed to reset default Regex entry: " << lastError
+                      << std::endl;
+            sqlite3_finalize(stmt);
+            transaction.rollback();
+            return false;
+        }
+    }
+
+    sqlite3_finalize(stmt);
+    return transaction.commit();
+}
+
 // Suspicious Words CRUD
 static int suspicious_word_select_callback(void *data, int argc, char **argv,
                                            char **azColName) {
@@ -2735,10 +2858,26 @@ int DatabaseManager::getSuspiciousWordIdByWord(const std::string &word) {
 bool DatabaseManager::ClearPayments() {
     if (!db)
         return false;
-    // Delete details first, although ON DELETE CASCADE should handle it.
-    bool success = execute("DELETE FROM PaymentDetails;");
+
+    if (!execute("BEGIN IMMEDIATE;")) {
+        return false;
+    }
+
+    bool success = execute("DELETE FROM PaymentBaseDocumentLinks;");
+    if (success) {
+        success = execute("UPDATE BasePaymentDocuments SET payment_id = NULL "
+                          "WHERE payment_id IS NOT NULL;");
+    }
+    if (success) {
+        success = execute("DELETE FROM PaymentDetails;");
+    }
     if (success) {
         success = execute("DELETE FROM Payments;");
+    }
+    if (success) {
+        success = execute("COMMIT;");
+    } else {
+        execute("ROLLBACK;");
     }
     if (success) {
         execute("VACUUM;");
@@ -2749,32 +2888,89 @@ bool DatabaseManager::ClearPayments() {
 bool DatabaseManager::ClearCounterparties() {
     if (!db)
         return false;
-    // Note: This can fail if foreign key constraints are violated.
-    // The UI should warn the user about this.
-    bool success = execute("DELETE FROM Counterparties;");
-    if (success)
+
+    if (!execute("BEGIN IMMEDIATE;")) {
+        return false;
+    }
+
+    bool success =
+        execute("UPDATE Payments SET counterparty_id = NULL "
+                "WHERE counterparty_id IS NOT NULL;");
+    if (success) {
+        success = execute("UPDATE Contracts SET counterparty_id = NULL "
+                          "WHERE counterparty_id IS NOT NULL;");
+    }
+    if (success) {
+        success = execute("DELETE FROM Counterparties;");
+    }
+    if (success) {
+        success = execute("COMMIT;");
+    } else {
+        execute("ROLLBACK;");
+    }
+    if (success) {
         execute("VACUUM;");
+    }
     return success;
 }
 
 bool DatabaseManager::ClearContracts() {
     if (!db)
         return false;
-    bool success = execute("DELETE FROM Contracts;");
-    if (success)
+
+    if (!execute("BEGIN IMMEDIATE;")) {
+        return false;
+    }
+
+    bool success =
+        execute("UPDATE PaymentDetails SET contract_id = NULL "
+                "WHERE contract_id IS NOT NULL;");
+    if (success) {
+        success = execute("UPDATE BasePaymentDocuments SET contract_id = NULL "
+                          "WHERE contract_id IS NOT NULL;");
+    }
+    if (success) {
+        success = execute("DELETE FROM Contracts;");
+    }
+    if (success) {
+        success = execute("COMMIT;");
+    } else {
+        execute("ROLLBACK;");
+    }
+    if (success) {
         execute("VACUUM;");
+    }
     return success;
 }
 
 bool DatabaseManager::ClearBasePaymentDocuments() {
     if (!db)
         return false;
-    // Сначала удаляем расшифровки, затем сами документы
-    bool success = execute("DELETE FROM BasePaymentDocumentDetails;");
-    if (success)
+
+    if (!execute("BEGIN IMMEDIATE;")) {
+        return false;
+    }
+
+    bool success =
+        execute("UPDATE PaymentDetails SET base_document_id = NULL "
+                "WHERE base_document_id IS NOT NULL;");
+    if (success) {
+        success = execute("DELETE FROM PaymentBaseDocumentLinks;");
+    }
+    if (success) {
+        success = execute("DELETE FROM BasePaymentDocumentDetails;");
+    }
+    if (success) {
         success = execute("DELETE FROM BasePaymentDocuments;");
-    if (success)
+    }
+    if (success) {
+        success = execute("COMMIT;");
+    } else {
+        execute("ROLLBACK;");
+    }
+    if (success) {
         execute("VACUUM;");
+    }
     return success;
 }
 
@@ -3168,7 +3364,9 @@ bool DatabaseManager::updateSettings(const Settings &settings) {
 }
 
 bool DatabaseManager::backupTo(const std::string &backupFilepath) {
+    lastError.clear();
     if (!db) {
+        lastError = "База данных не открыта.";
         return false;
     }
 
@@ -3182,8 +3380,10 @@ bool DatabaseManager::backupTo(const std::string &backupFilepath) {
     sqlite3 *pBackupDb = nullptr;
     int rc = sqlite3_open(backupFilepath.c_str(), &pBackupDb);
     if (rc != SQLITE_OK) {
-        std::cerr << "Cannot open backup database: "
-                  << sqlite3_errmsg(pBackupDb) << std::endl;
+        lastError = pBackupDb ? sqlite3_errmsg(pBackupDb)
+                              : "Не удалось открыть файл резервной копии.";
+        std::cerr << "Cannot open backup database: " << lastError
+                  << std::endl;
         sqlite3_close(pBackupDb);
         return false;
     }
@@ -3191,31 +3391,27 @@ bool DatabaseManager::backupTo(const std::string &backupFilepath) {
     sqlite3_backup *pBackup =
         sqlite3_backup_init(pBackupDb, "main", db, "main");
     if (!pBackup) {
-        std::cerr << "Failed to init backup: " << sqlite3_errmsg(pBackupDb)
-                  << std::endl;
+        lastError = sqlite3_errmsg(pBackupDb);
+        std::cerr << "Failed to init backup: " << lastError << std::endl;
         sqlite3_close(pBackupDb);
         return false;
     }
 
-    rc = sqlite3_backup_step(pBackup, -1); // -1 to copy all pages
-
-    if (rc != SQLITE_DONE) {
-        std::cerr << "Backup step failed: " << sqlite3_errmsg(pBackupDb)
-                  << std::endl;
+    int step_rc = sqlite3_backup_step(pBackup, -1); // -1 to copy all pages
+    if (step_rc != SQLITE_DONE) {
+        lastError = sqlite3_errmsg(pBackupDb);
+        std::cerr << "Backup step failed: " << lastError << std::endl;
     }
 
-    sqlite3_backup_finish(pBackup);
-
-    // Check for errors during backup finish
-    rc = sqlite3_errcode(pBackupDb);
-    if (rc != SQLITE_OK) {
-        std::cerr << "Backup finish failed: " << sqlite3_errmsg(pBackupDb)
-                  << std::endl;
+    int finish_rc = sqlite3_backup_finish(pBackup);
+    if (finish_rc != SQLITE_OK && lastError.empty()) {
+        lastError = sqlite3_errmsg(pBackupDb);
+        std::cerr << "Backup finish failed: " << lastError << std::endl;
     }
 
     sqlite3_close(pBackupDb);
 
-    return rc == SQLITE_OK;
+    return step_rc == SQLITE_DONE && finish_rc == SQLITE_OK;
 }
 
 // ==================== BasePaymentDocument Methods ====================

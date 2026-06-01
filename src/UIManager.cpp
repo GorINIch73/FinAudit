@@ -289,6 +289,12 @@ bool UIManager::BackupCurrentDatabase(const std::string& reason,
     return dbManager->backupTo(backupPath);
 }
 
+void UIManager::RefreshAllViews() {
+    for (const auto &view : allViews) {
+        view->RefreshData();
+    }
+}
+
 void UIManager::ShowError(const std::string& message) {
     lastErrorMessage = message;
     showErrorPopup = true;

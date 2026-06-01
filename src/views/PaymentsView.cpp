@@ -177,6 +177,15 @@ static std::string normalize_contract_date_for_bank_dialog(
     return date;
 }
 
+static std::string trim_bank_text(const std::string &value) {
+    size_t first = value.find_first_not_of(" \n\r\t");
+    if (first == std::string::npos) {
+        return "";
+    }
+    size_t last = value.find_last_not_of(" \n\r\t");
+    return value.substr(first, last - first + 1);
+}
+
 static std::string normalize_contract_number_from_regex(
     const std::string &value) {
     std::string result;
@@ -906,6 +915,11 @@ void PaymentsView::Render() {
                     }
                 }
             }
+            if (ImGui::Button("Заполнить ID контрагента")) {
+                if (!m_filtered_payments.empty() && current_operation == NONE) {
+                    StartGroupOperation(FILL_COUNTERPARTY);
+                }
+            }
             ImGui::SameLine();
             if (ImGui::Button("Удалить расшифровки")) {
                 if (!m_filtered_payments.empty() && current_operation == NONE) {
@@ -1440,10 +1454,40 @@ void PaymentsView::Render() {
                         contractsForDropdown = dbManager->getContracts();
 
                         if (contract_id_to_set != -1) {
+                            paymentDetails =
+                                dbManager->getPaymentDetails(selectedPayment.id);
+
+                            auto detail_to_update = paymentDetails.end();
                             if (selectedDetail.id > 0) {
-                                selectedDetail.contract_id = contract_id_to_set;
-                                isDetailDirty = true;
-                                SaveDetailChanges();
+                                detail_to_update = std::find_if(
+                                    paymentDetails.begin(), paymentDetails.end(),
+                                    [&](const PaymentDetail &detail) {
+                                        return detail.id == selectedDetail.id;
+                                    });
+                            }
+                            if (detail_to_update == paymentDetails.end()) {
+                                detail_to_update = std::find_if(
+                                    paymentDetails.begin(), paymentDetails.end(),
+                                    [](const PaymentDetail &detail) {
+                                        return detail.contract_id == -1;
+                                    });
+                            }
+                            if (detail_to_update == paymentDetails.end() &&
+                                !paymentDetails.empty()) {
+                                detail_to_update = paymentDetails.begin();
+                            }
+
+                            if (detail_to_update != paymentDetails.end()) {
+                                detail_to_update->contract_id =
+                                    contract_id_to_set;
+                                dbManager->updatePaymentDetail(
+                                    *detail_to_update);
+                                selectedDetail = *detail_to_update;
+                                originalDetail = selectedDetail;
+                                selectedDetailIndex = static_cast<int>(
+                                    std::distance(paymentDetails.begin(),
+                                                  detail_to_update));
+                                isDetailDirty = false;
                             } else if (selectedPayment.id > 0) {
                                 PaymentDetail newDetail;
                                 newDetail.payment_id = selectedPayment.id;
@@ -2537,6 +2581,33 @@ void PaymentsView::ProcessGroupOperation() {
             }
             break;
         }
+        case FILL_COUNTERPARTY: {
+            if (payment.counterparty_id != -1) {
+                break;
+            }
+
+            std::string counterparty_name = trim_bank_text(payment.recipient);
+            if (counterparty_name.empty()) {
+                break;
+            }
+
+            int counterparty_id =
+                dbManager->getCounterpartyIdByName(counterparty_name);
+            if (counterparty_id == -1) {
+                Counterparty counterparty;
+                counterparty.name = counterparty_name;
+                if (dbManager->addCounterparty(counterparty)) {
+                    counterparty_id = counterparty.id;
+                }
+            }
+
+            if (counterparty_id != -1) {
+                Payment updated_payment = payment;
+                updated_payment.counterparty_id = counterparty_id;
+                dbManager->updatePayment(updated_payment);
+            }
+            break;
+        }
         case NONE:
             break;
         }
@@ -2557,6 +2628,9 @@ void PaymentsView::ProcessGroupOperation() {
         current_operation = NONE;
         processed_items = 0;
         items_to_process.clear();
+
+        RefreshDropdownData();
+        RefreshData();
 
         // Refresh details of currently selected payment if any
         if (selectedPayment.id > 0) {

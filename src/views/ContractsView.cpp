@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <sstream> // For std::ostringstream
 
 #include <functional> // Добавить для std::function
@@ -874,7 +875,7 @@ void ContractsView::Render() {
         const char *filter_items[] = {
             "Все",           "Для проверки", "Усиленный контроль",
             "С примечанием", "С реестровым номером", "Подозрительное в платежах",
-            "Ненайденные"};
+            "Ненайденные", "Одинаковые номера"};
         if (ImGui::Combo("Фильтр по статусу", &contract_filter_index,
                          filter_items, IM_ARRAYSIZE(filter_items))) {
             filter_changed = true;
@@ -1399,6 +1400,19 @@ void ContractsView::UpdateFilteredContracts() {
     }
 
     // 3. Category filter pass
+    std::map<std::string, int> contract_number_counts;
+    for (const auto &contract : contracts) {
+        if (!contract.number.empty()) {
+            contract_number_counts[contract.number]++;
+        }
+    }
+    std::set<std::string> duplicate_contract_numbers;
+    for (const auto &entry : contract_number_counts) {
+        if (entry.second > 1) {
+            duplicate_contract_numbers.insert(entry.first);
+        }
+    }
+
     m_filtered_contracts.clear();
     switch (contract_filter_index) {
     case 0: // Все
@@ -1457,6 +1471,14 @@ void ContractsView::UpdateFilteredContracts() {
     case 6: // Ненайденные
         for (const auto &contract : text_filtered_contracts) {
             if (contract.is_for_checking && !contract.is_found) {
+                m_filtered_contracts.push_back(contract);
+            }
+        }
+        break;
+    case 7: // Одинаковые номера
+        for (const auto &contract : text_filtered_contracts) {
+            if (duplicate_contract_numbers.find(contract.number) !=
+                duplicate_contract_numbers.end()) {
                 m_filtered_contracts.push_back(contract);
             }
         }

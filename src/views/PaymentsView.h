@@ -143,7 +143,8 @@ private:
         ADD_KOSGU,
         REPLACE,
         DELETE_DETAILS,
-        APPLY_REGEX
+        APPLY_REGEX,
+        FILL_COUNTERPARTY
     };
     GroupOperationType current_operation = NONE;
     int processed_items = 0;

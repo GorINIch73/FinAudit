@@ -50,6 +50,7 @@ public:
     void ShowContractRegistryNumbersView();
     bool SaveAllViews();
     bool BackupCurrentDatabase(const std::string& reason, std::string& backupPath);
+    void RefreshAllViews();
     void ShowError(const std::string& message);
     SpecialQueryView* CreateSpecialQueryView(const std::string& title, const std::string& query);
     void ApplyTheme(int theme_index);
@@ -72,7 +73,7 @@ public:
         view->SetDatabaseManager(dbManager);
         view->SetPdfReporter(pdfReporter);
 
-        if constexpr (std::is_same_v<T, ImportMapView> || std::is_same_v<T, JO4ImportMapView> || std::is_same_v<T, PaymentsView> || std::is_same_v<T, ContractsView> || std::is_same_v<T, KosguView> || std::is_same_v<T, CounterpartiesView> || std::is_same_v<T, SettingsView> || std::is_same_v<T, ContractRegistryNumbersView>) {
+        if constexpr (std::is_same_v<T, ImportMapView> || std::is_same_v<T, JO4ImportMapView> || std::is_same_v<T, PaymentsView> || std::is_same_v<T, ContractsView> || std::is_same_v<T, KosguView> || std::is_same_v<T, CounterpartiesView> || std::is_same_v<T, SettingsView> || std::is_same_v<T, ContractRegistryNumbersView> || std::is_same_v<T, SelectiveCleanView>) {
             viewPtr->SetUIManager(this);
         }
         

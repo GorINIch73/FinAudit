@@ -23,6 +23,7 @@ public:
 
     virtual void OnDeactivate() {}
     virtual bool ForceSave() { return true; }
+    virtual void RefreshData() {}
 
     bool IsVisible = false;
 

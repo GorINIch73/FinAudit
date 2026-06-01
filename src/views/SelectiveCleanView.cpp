@@ -60,28 +60,38 @@ void SelectiveCleanView::Render() {
     ImGui::Text("Очистка основных таблиц:");
     if (ImGui::Button(ICON_FA_MONEY_BILL " Удалить все платежи и расшифровки")) {
         currentCleanTarget = CleanTarget::Payments;
-        confirmationMessage = "Вы уверены, что хотите удалить ВСЕ платежи и связанные с ними расшифровки?";
+        confirmationMessage =
+            "Вы уверены, что хотите удалить ВСЕ платежи и связанные с ними "
+            "расшифровки? Поле платежа в документах основания будет очищено.";
         ImGui::OpenPopup("ConfirmationModal");
         show_confirmation_modal_internal = true;
     }
 
     if (ImGui::Button(ICON_FA_ADDRESS_BOOK " Удалить всех контрагентов")) {
         currentCleanTarget = CleanTarget::Counterparties;
-        confirmationMessage = "Вы уверены, что хотите удалить ВСЕХ контрагентов? Это может нарушить целостность данных, если существуют связанные договоры или платежи.";
+        confirmationMessage =
+            "Вы уверены, что хотите удалить ВСЕХ контрагентов? Поле "
+            "контрагента в связанных платежах и договорах будет очищено.";
         ImGui::OpenPopup("ConfirmationModal");
         show_confirmation_modal_internal = true;
     }
 
     if (ImGui::Button(ICON_FA_FILE_CONTRACT " Удалить все договоры")) {
         currentCleanTarget = CleanTarget::Contracts;
-        confirmationMessage = "Вы уверены, что хотите удалить ВСЕ договоры? Это может нарушить целостность данных, если существуют связанные платежи.";
+        confirmationMessage =
+            "Вы уверены, что хотите удалить ВСЕ договоры? Поле договора в "
+            "связанных расшифровках платежей и документах основания будет "
+            "очищено.";
         ImGui::OpenPopup("ConfirmationModal");
         show_confirmation_modal_internal = true;
     }
 
     if (ImGui::Button(ICON_FA_FILE_LINES " Удалить все документы основания")) {
         currentCleanTarget = CleanTarget::BasePaymentDocuments;
-        confirmationMessage = "Вы уверены, что хотите удалить ВСЕ документы основания и связанные расшифровки? Это может нарушить целостность данных, если существуют связанные платежи.";
+        confirmationMessage =
+            "Вы уверены, что хотите удалить ВСЕ документы основания и их "
+            "расшифровки? Поле документа основания в расшифровках платежей "
+            "будет очищено.";
         ImGui::OpenPopup("ConfirmationModal");
         show_confirmation_modal_internal = true;
     }
@@ -108,9 +118,11 @@ void SelectiveCleanView::Render() {
 void SelectiveCleanView::ShowConfirmationModal() {
     if (CustomWidgets::ConfirmationModal("ConfirmationModal", "Подтверждение операции", confirmationMessage.c_str(), "Да, я уверен", "Отмена", show_confirmation_modal_internal)) {
         bool success = false;
+        bool backup_ok = false;
         std::string backupPath;
         if (dbManager) {
             if (BackupBeforeDangerousOperation(backupPath)) {
+                backup_ok = true;
                 switch (currentCleanTarget) {
                     case CleanTarget::Payments:       success = dbManager->ClearPayments(); break;
                     case CleanTarget::Counterparties: success = dbManager->ClearCounterparties(); break;
@@ -122,9 +134,17 @@ void SelectiveCleanView::ShowConfirmationModal() {
             }
         }
         if (success) {
+            if (uiManager) {
+                uiManager->RefreshAllViews();
+            }
             resultMessage = "Операция выполнена успешно. Резервная копия: " + backupPath;
         } else {
-            resultMessage = "Ошибка при выполнении операции.";
+            if (backup_ok && dbManager && !dbManager->getLastError().empty()) {
+                resultMessage = "Ошибка при выполнении операции: " +
+                                dbManager->getLastError();
+            } else if (resultMessage.empty()) {
+                resultMessage = "Ошибка при выполнении операции.";
+            }
         }
         currentCleanTarget = CleanTarget::None;
     } else if (!show_confirmation_modal_internal && currentCleanTarget != CleanTarget::None) {
@@ -137,6 +157,9 @@ void SelectiveCleanView::ShowConfirmationModal() {
 bool SelectiveCleanView::BackupBeforeDangerousOperation(std::string& backupPath) {
     if (!uiManager || !uiManager->BackupCurrentDatabase("cleanup", backupPath)) {
         resultMessage = "Ошибка: не удалось создать резервную копию перед очисткой.";
+        if (dbManager && !dbManager->getLastError().empty()) {
+            resultMessage += " " + dbManager->getLastError();
+        }
         return false;
     }
 
