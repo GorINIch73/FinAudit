@@ -700,7 +700,7 @@ bool ImportManager::importIKZFromFile(
 
         std::vector<std::string> row = split(line, delimiter);
 
-        int max_required_col = std::max({number_col, date_col, ikz_col});
+        int max_required_col = std::max(number_col, date_col);
         if (max_required_col < 0 ||
             row.size() <= static_cast<size_t>(max_required_col)) {
             continue; // Skip malformed lines
@@ -708,10 +708,15 @@ bool ImportManager::importIKZFromFile(
 
         std::string contract_number = clean_import_field(row[number_col]);
         std::string contract_date_raw = clean_import_field(row[date_col]);
-        std::string ikz = clean_import_field(row[ikz_col]);
 
-        if (contract_number.empty() || contract_date_raw.empty() || ikz.empty()) {
+        if (contract_number.empty() || contract_date_raw.empty()) {
             continue; // Skip lines with essential missing data
+        }
+
+        std::string ikz;
+        if (ikz_col >= 0 && row.size() > static_cast<size_t>(ikz_col) &&
+            ikz_col != amount_col) {
+            ikz = clean_import_field(row[ikz_col]);
         }
 
         std::string contract_date = convertDateToDBFormat(contract_date_raw);
