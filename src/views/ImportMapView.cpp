@@ -1,4 +1,6 @@
 #include "ImportMapView.h"
+#include "../PaymentPurposeUtils.h"
+#include "../UnicodeRegex.h"
 #include "../IconsFontAwesome6.h"
 #include "../ImportManager.h"
 #include "../PlatformUtils.h"
@@ -87,12 +89,14 @@ static std::string get_regex_match(const std::string &text,
     // std::cout << "  Text:    '" << text << "'" << std::endl;
     // std::cout << "  Pattern: '" << pattern << "'" << std::endl;
     try {
-        std::regex re(pattern);
-        std::smatch match;
-        if (std::regex_search(text, match, re) && match.size() > 1) {
+        UnicodeRegex re(pattern);
+        std::vector<std::string> match;
+        const std::string regex_text =
+            prepare_payment_purpose_for_contract_regex(text);
+        if (re.search(regex_text, match) && match.size() > 1) {
             // std::cout << "  Match:   '" << match[1].str() << "'" <<
             // std::endl;
-            return match[1].str();
+            return match[1];
         }
     } catch (const std::regex_error &e) {
         // std::cerr << "  Regex error: " << e.what() << std::endl;

@@ -1,5 +1,7 @@
 #include "ImportManager.h"
+#include "PaymentPurposeUtils.h"
 #include "PlatformUtils.h"
+#include "UnicodeRegex.h"
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -314,14 +316,18 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
     std::string line;
     std::getline(file, line); // Skip header line
 
-    std::regex contract_regex;
+    UnicodeRegex contract_regex(contract_regex_str);
     std::regex kosgu_regex;
     try {
-        contract_regex = std::regex(contract_regex_str);
         kosgu_regex = std::regex(kosgu_regex_str);
     } catch (const std::regex_error &e) {
         std::lock_guard<std::mutex> lock(message_mutex);
         message = "Ошибка regex при импорте: " + std::string(e.what());
+        return false;
+    }
+    if (!contract_regex.isValid()) {
+        std::lock_guard<std::mutex> lock(message_mutex);
+        message = "Ошибка regex при импорте: " + contract_regex.error();
         return false;
     }
     std::regex amount_regex(
@@ -480,14 +486,15 @@ bool ImportManager::ImportPaymentsFromTsv(const std::string &filepath,
         payment.counterparty_id = counterparty_id;
 
         int current_contract_id = -1;
-        std::smatch contract_matches;
-        if (std::regex_search(payment.description, contract_matches,
-                              contract_regex)) {
+        std::vector<std::string> contract_matches;
+        const std::string contract_regex_text =
+            prepare_payment_purpose_for_contract_regex(payment.description);
+        if (contract_regex.search(contract_regex_text, contract_matches)) {
             if (contract_matches.size() >= 3) {
-                std::string contract_number =
-                    removeWhitespace(contract_matches[1].str());
-                std::string contract_date_db_format =
-                    convertDateToDBFormat(contract_matches[2].str());
+                const std::string contract_number =
+                    removeWhitespace(contract_matches[1]);
+                const std::string contract_date_db_format =
+                    convertDateToDBFormat(contract_matches[2]);
                 current_contract_id = get_or_create_contract_id(
                     contract_number, contract_date_db_format, counterparty_id);
             }

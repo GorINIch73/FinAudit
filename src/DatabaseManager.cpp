@@ -1,4 +1,5 @@
 #include "DatabaseManager.h"
+#include "ContractNumberUtils.h"
 #include "ExportManager.h"
 #include <algorithm>
 #include <iostream>
@@ -151,10 +152,10 @@ static bool payment_details_references_invoices(sqlite3 *db) {
 }
 
 static const char *DEFAULT_CONTRACTS_REGEX =
-    "(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
-    "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)"
-    "\\s*(?:N|№)?\\s*"
-    "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?!(?:\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}))[0-9][0-9A-Za-zА-Яа-я/_.-]*){0,4})"
+    "(?:^|[^0-9A-Za-zА-Яа-я])(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
+    "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т|[Кк]\\.)"
+    "(?![A-Za-zА-Яа-я])\\s*(?:N|№)?\\s*"
+    "([0-9A-Za-zА-Яа-яЁё/_.-]+(?:\\s+(?!(?:\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}))(?:(?:[0-9][0-9A-Za-zА-Яа-яЁё/_.-]*)|(?:[A-ZА-ЯЁ]{2,}[0-9A-ZА-ЯЁ/_.-]*))){0,4})"
     "(?:(?!(?:УПД|[Аа]кт|[Сс]чёт|[Сс]чет|[Сс]ч\\.?|[Нн]акладн))[\\s\\S])"
     "{0,80}?"
     "(\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|"
@@ -346,9 +347,10 @@ void DatabaseManager::checkAndUpdateDatabaseSchema() {
     execute(
         "INSERT OR IGNORE INTO Regexes (name, pattern) VALUES "
         "('Контракты', "
-        "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|[Кк]онтракт("
-        "?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)\\s*(?:N|№)?\\s*"
-        "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?!(?:\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}))[0-9][0-9A-Za-zА-Яа-я/_.-]*){0,4})"
+        "'(?:^|[^0-9A-Za-zА-Яа-я])(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|[Кк]онтракт("
+        "?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т|[Кк]\\.)"
+        "(?![A-Za-zА-Яа-я])\\s*(?:N|№)?\\s*"
+        "([0-9A-Za-zА-Яа-яЁё/_.-]+(?:\\s+(?!(?:\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}))(?:(?:[0-9][0-9A-Za-zА-Яа-яЁё/_.-]*)|(?:[A-ZА-ЯЁ]{2,}[0-9A-ZА-ЯЁ/_.-]*))){0,4})"
         "(?:(?!(?:УПД|[Аа]кт|[Сс]чёт|[Сс]чет|[Сс]ч\\.?|[Нн]акладн))[\\s\\S]){0,80}?"
         "(\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|"
         "\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2})');");
@@ -877,9 +879,10 @@ bool DatabaseManager::createDatabase(const std::string &filepath) {
 
     std::vector<std::string> default_regexes = {
         "INSERT OR IGNORE INTO Regexes (name, pattern) VALUES ('Контракты', "
-        "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
-        "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)\\s*(?:N|№)?\\s*"
-        "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?!(?:\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}))[0-9][0-9A-Za-zА-Яа-я/_.-]*){0,4})"
+        "'(?:^|[^0-9A-Za-zА-Яа-я])(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
+        "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т|[Кк]\\.)"
+        "(?![A-Za-zА-Яа-я])\\s*(?:N|№)?\\s*"
+        "([0-9A-Za-zА-Яа-яЁё/_.-]+(?:\\s+(?!(?:\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}))(?:(?:[0-9][0-9A-Za-zА-Яа-яЁё/_.-]*)|(?:[A-ZА-ЯЁ]{2,}[0-9A-ZА-ЯЁ/_.-]*))){0,4})"
         "(?:(?!(?:УПД|[Аа]кт|[Сс]чёт|[Сс]чет|[Сс]ч\\.?|[Нн]акладн))[\\s\\S]){0,80}?"
         "(\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|"
         "\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2})'"
@@ -1321,6 +1324,15 @@ DatabaseManager::getPaymentInfoForCounterparty(int counterparty_id) {
 int DatabaseManager::addContract(Contract &contract) {
     if (!db)
         return -1;
+    contract.number = normalize_contract_number(contract.number);
+    if (!contract.number.empty() && !contract.date.empty()) {
+        const int existing_id =
+            getContractIdByNumberDate(contract.number, contract.date);
+        if (existing_id != -1) {
+            contract.id = existing_id;
+            return existing_id;
+        }
+    }
     std::string sql = "INSERT INTO Contracts (number, date, counterparty_id, "
                       "contract_amount, end_date, procurement_code, note, "
                       "is_for_checking, is_for_special_control, is_found) "
@@ -1367,7 +1379,12 @@ int DatabaseManager::getContractIdByNumberDate(const std::string &number,
                                                const std::string &date) {
     if (!db)
         return -1;
-    std::string sql = "SELECT id FROM Contracts WHERE number = ? AND date = ?;";
+    const std::string normalized_number = normalize_contract_number(number);
+    std::string sql =
+        "SELECT id FROM Contracts WHERE "
+        "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(number, ' ', ''), "
+        "char(9), ''), char(10), ''), char(13), ''), char(160), ''), "
+        "char(8239), '') = ? AND date = ? ORDER BY id LIMIT 1;";
     sqlite3_stmt *stmt = nullptr;
     int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
@@ -1375,7 +1392,7 @@ int DatabaseManager::getContractIdByNumberDate(const std::string &number,
                   << std::endl;
         return -1;
     }
-    sqlite3_bind_text(stmt, 1, number.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, normalized_number.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 2, date.c_str(), -1, SQLITE_STATIC);
 
     int id = -1;
@@ -1391,8 +1408,12 @@ int DatabaseManager::updateContractProcurementCode(
     const std::string &procurement_code) {
     if (!db)
         return 0;
+    const std::string normalized_number = normalize_contract_number(number);
     std::string sql =
-        "UPDATE Contracts SET procurement_code = ? WHERE number = ? AND "
+        "UPDATE Contracts SET procurement_code = ? WHERE "
+        "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(number, ' ', ''), "
+        "char(9), ''), char(10), ''), char(13), ''), char(160), ''), "
+        "char(8239), '') = ? AND "
         "(date = ? OR date = ?) AND (procurement_code IS NULL OR "
         "procurement_code = '');";
     sqlite3_stmt *stmt = nullptr;
@@ -1406,7 +1427,7 @@ int DatabaseManager::updateContractProcurementCode(
     }
 
     sqlite3_bind_text(stmt, 1, procurement_code.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, number.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, normalized_number.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 3, date.c_str(), -1, SQLITE_STATIC);
     // Передаем дату в формате dd.mm.yyyy для альтернативного поиска
     std::string date_ddmmyyyy;
@@ -1436,11 +1457,14 @@ int DatabaseManager::updateContractProcurementCodeAndAmount(
     if (!db)
         return 0;
 
+    const std::string normalized_number = normalize_contract_number(number);
     std::string sql =
         "UPDATE Contracts SET "
         "procurement_code = CASE WHEN ? <> '' THEN ? ELSE procurement_code END, "
         "contract_amount = CASE WHEN ? THEN ? ELSE contract_amount END "
-        "WHERE number = ? AND (date = ? OR date = ?);";
+        "WHERE REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(number, ' ', "
+        "''), char(9), ''), char(10), ''), char(13), ''), char(160), ''), "
+        "char(8239), '') = ? AND (date = ? OR date = ?);";
     sqlite3_stmt *stmt = nullptr;
     int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
@@ -1461,7 +1485,7 @@ int DatabaseManager::updateContractProcurementCodeAndAmount(
     sqlite3_bind_text(stmt, 2, procurement_code.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_int(stmt, 3, has_contract_amount ? 1 : 0);
     sqlite3_bind_double(stmt, 4, contract_amount);
-    sqlite3_bind_text(stmt, 5, number.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 5, normalized_number.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 6, date.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 7, date_ddmmyyyy.c_str(), -1, SQLITE_STATIC);
 
@@ -1581,7 +1605,10 @@ bool DatabaseManager::updateContract(const Contract &contract) {
                   << sqlite3_errmsg(db) << std::endl;
         return false;
     }
-    sqlite3_bind_text(stmt, 1, contract.number.c_str(), -1, SQLITE_STATIC);
+    const std::string normalized_number =
+        normalize_contract_number(contract.number);
+    sqlite3_bind_text(stmt, 1, normalized_number.c_str(), -1,
+                      SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, contract.date.c_str(), -1, SQLITE_STATIC);
     if (contract.counterparty_id != -1) {
         sqlite3_bind_int(stmt, 3, contract.counterparty_id);

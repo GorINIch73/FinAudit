@@ -3,6 +3,8 @@
 #include "../IconsFontAwesome6.h"
 #include "../BasePaymentDocument.h"
 #include "../PlatformUtils.h"
+#include "../PaymentPurposeUtils.h"
+#include "../UnicodeRegex.h"
 #include "../UIManager.h"
 #include "CustomWidgets.h"
 #include <algorithm> // для std::sort
@@ -1300,13 +1302,15 @@ void PaymentsView::Render() {
                 auto TestRegexAndExtract = [&](const char *pattern) {
                     if (pattern[0] != '\0' && dbManager) {
                         try {
-                            std::regex re(pattern);
-                            std::smatch match;
-                            if (std::regex_search(selectedPayment.description,
-                                                  match, re) &&
+                            UnicodeRegex re(pattern);
+                            std::vector<std::string> match;
+                            const std::string contract_regex_text =
+                                prepare_payment_purpose_for_contract_regex(
+                                    selectedPayment.description);
+                            if (re.search(contract_regex_text, match) &&
                                 match.size() > 2) {
-                                extracted_number = match[1].str();
-                                extracted_date = match[2].str();
+                                extracted_number = match[1];
+                                extracted_date = match[2];
 
                                 extracted_number.erase(
                                     extracted_number.find_last_not_of(
@@ -2484,9 +2488,19 @@ void PaymentsView::ProcessGroupOperation() {
                 try {
                     std::regex re(it->pattern);
                     std::smatch match;
-                    if (std::regex_search(payment.description, match, re) &&
-                        match.size() >
-                            1) { // Changed to > 1 as KOSGU only needs 1 group
+                    UnicodeRegex contract_re(it->pattern);
+                    std::vector<std::string> contract_match;
+                    const std::string contract_regex_text =
+                        prepare_payment_purpose_for_contract_regex(
+                            payment.description);
+                    const bool matched = regex_target == 0
+                        ? contract_re.search(contract_regex_text,
+                                             contract_match)
+                        : std::regex_search(payment.description, match, re);
+                    const size_t match_size = regex_target == 0
+                        ? contract_match.size()
+                        : match.size();
+                    if (matched && match_size > 1) {
 
                         if (regex_target == 1) { // Target is KOSGU
                             std::string kosgu_code = match[1].str();
@@ -2546,10 +2560,9 @@ void PaymentsView::ProcessGroupOperation() {
                                     }
                                 }
                             }
-                        } else if (regex_target == 0 && match.size() >
-                                   2) { // Contract, requires 2 groups (number and date)
-                            std::string number = match[1].str();
-                            std::string date = match[2].str();
+                        } else if (regex_target == 0 && match_size > 2) {
+                            std::string number = contract_match[1];
+                            std::string date = contract_match[2];
 
                             number.erase(number.find_last_not_of(" \n\r\t") +
                                          1);
