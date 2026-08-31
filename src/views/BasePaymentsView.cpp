@@ -1,6 +1,7 @@
 #include "BasePaymentsView.h"
 #include "../CustomWidgets.h"
 #include "../IconsFontAwesome6.h"
+#include "../PlatformUtils.h"
 #include "../UIManager.h"
 #include <algorithm>
 #include <cstring>
@@ -61,46 +62,21 @@ void BasePaymentsView::UpdateFilteredDocuments() {
 
         // Текстовый фильтр (ищет по полям документа И по полям расшифровок)
         if (filterText[0] != '\0') {
-            std::string search = filterText;
-            std::transform(search.begin(), search.end(), search.begin(),
-                           ::tolower);
-
-            // Проверяем поля документа
-            std::string doc_num = doc.number;
-            std::transform(doc_num.begin(), doc_num.end(), doc_num.begin(),
-                           ::tolower);
-            std::string doc_name = doc.document_name;
-            std::transform(doc_name.begin(), doc_name.end(), doc_name.begin(),
-                           ::tolower);
-            std::string doc_note = doc.note;
-            std::transform(doc_note.begin(), doc_note.end(), doc_note.begin(),
-                           ::tolower);
-
-            // Имя контрагента уже текстовое поле документа
-            std::string doc_counterparty_name = doc.counterparty_name;
-            std::transform(doc_counterparty_name.begin(), doc_counterparty_name.end(),
-                           doc_counterparty_name.begin(), ::tolower);
-
-            bool doc_matches = (doc_num.find(search) != std::string::npos) ||
-                               (doc_name.find(search) != std::string::npos) ||
-                               (doc_note.find(search) != std::string::npos) ||
-                               (doc_counterparty_name.find(search) != std::string::npos);
+            const std::string search = filterText;
+            bool doc_matches =
+                utf8_icontains(doc.number, search) ||
+                utf8_icontains(doc.document_name, search) ||
+                utf8_icontains(doc.note, search) ||
+                utf8_icontains(doc.counterparty_name, search);
 
             // Проверяем номер, контрагента и назначение привязанного платежа
             bool payment_matches = false;
             if (doc.payment_id > 0) {
                 for (const auto& pay : paymentsForDropdown) {
                     if (pay.id == doc.payment_id) {
-                        std::string pay_num = pay.doc_number;
-                        std::transform(pay_num.begin(), pay_num.end(), pay_num.begin(), ::tolower);
-                        std::string pay_desc = pay.description;
-                        std::transform(pay_desc.begin(), pay_desc.end(), pay_desc.begin(), ::tolower);
-                        std::string pay_cp = pay.recipient;
-                        std::transform(pay_cp.begin(), pay_cp.end(), pay_cp.begin(), ::tolower);
-
-                        if (pay_num.find(search) != std::string::npos ||
-                            pay_desc.find(search) != std::string::npos ||
-                            pay_cp.find(search) != std::string::npos) {
+                        if (utf8_icontains(pay.doc_number, search) ||
+                            utf8_icontains(pay.description, search) ||
+                            utf8_icontains(pay.recipient, search)) {
                             payment_matches = true;
                         }
                         break;
@@ -116,23 +92,10 @@ void BasePaymentsView::UpdateFilteredDocuments() {
             for (const auto& detail : allDetails) {
                 if (detail.document_id != doc.id) continue;
 
-                std::string op_content = detail.operation_content;
-                std::transform(op_content.begin(), op_content.end(), op_content.begin(),
-                               ::tolower);
-                std::string debit = detail.debit_account;
-                std::transform(debit.begin(), debit.end(), debit.begin(),
-                               ::tolower);
-                std::string credit = detail.credit_account;
-                std::transform(credit.begin(), credit.end(), credit.begin(),
-                               ::tolower);
-                std::string detail_note = detail.note;
-                std::transform(detail_note.begin(), detail_note.end(), detail_note.begin(),
-                               ::tolower);
-
-                if (op_content.find(search) != std::string::npos ||
-                    debit.find(search) != std::string::npos ||
-                    credit.find(search) != std::string::npos ||
-                    detail_note.find(search) != std::string::npos) {
+                if (utf8_icontains(detail.operation_content, search) ||
+                    utf8_icontains(detail.debit_account, search) ||
+                    utf8_icontains(detail.credit_account, search) ||
+                    utf8_icontains(detail.note, search)) {
                     detail_matches = true;
                     break;
                 }

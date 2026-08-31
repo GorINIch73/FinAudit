@@ -30,6 +30,7 @@ private:
     void SelectContractAtFilteredIndex(int index);
     void ReconcileSelectionAfterFilter();
     std::string BuildActTotalsQuery() const;
+    std::string BuildActTotalsByYearQuery() const;
     void PrintActTotalsReport();
     static std::string EscapeHtml(const std::string& value);
 

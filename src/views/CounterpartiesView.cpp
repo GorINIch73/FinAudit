@@ -257,6 +257,47 @@ void CounterpartiesView::ReconcileSelectionAfterFilter() {
     SelectCounterparty(*it);
 }
 
+bool CounterpartiesView::ApplyContractOptionalToFiltered(bool value) {
+    if (!dbManager || m_filtered_counterparties.empty() || !SaveChanges()) {
+        return false;
+    }
+
+    if (uiManager) {
+        std::string backupPath;
+        if (!uiManager->BackupCurrentDatabase("group_counterparties",
+                                              backupPath)) {
+            return false;
+        }
+    }
+
+    if (!dbManager->beginTransaction()) {
+        return false;
+    }
+
+    bool success = true;
+    for (auto counterparty : m_filtered_counterparties) {
+        if (counterparty.is_contract_optional == value) {
+            continue;
+        }
+        counterparty.is_contract_optional = value;
+        if (!dbManager->updateCounterparty(counterparty)) {
+            success = false;
+            break;
+        }
+    }
+
+    if (success) {
+        success = dbManager->commitTransaction();
+    }
+    if (!success) {
+        dbManager->rollbackTransaction();
+    }
+
+    RefreshData();
+    ApplyStoredSorting();
+    return success;
+}
+
 void CounterpartiesView::Render() {
     if (!IsVisible) {
         if (isDirty) {
@@ -402,6 +443,42 @@ void CounterpartiesView::Render() {
             SaveChanges();
             UpdateFilteredCounterparties();
             ReconcileSelectionAfterFilter();
+        }
+
+        if (ImGui::CollapsingHeader("Групповые операции")) {
+            ImGui::Text("Отобрано контрагентов: %zu",
+                        m_filtered_counterparties.size());
+            ImGui::BeginDisabled(m_filtered_counterparties.empty());
+            if (ImGui::Button("Установить: договор необязателен")) {
+                show_set_contract_optional_popup = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Снять: договор необязателен")) {
+                show_clear_contract_optional_popup = true;
+            }
+            ImGui::EndDisabled();
+        }
+
+        const std::string set_optional_message =
+            "Установить признак «Договор необязателен» для " +
+            std::to_string(m_filtered_counterparties.size()) +
+            " отобранных контрагентов?";
+        if (CustomWidgets::ConfirmationModal(
+                "Групповая установка необязательного договора",
+                "Групповая операция", set_optional_message.c_str(), "Да",
+                "Нет", show_set_contract_optional_popup)) {
+            ApplyContractOptionalToFiltered(true);
+        }
+
+        const std::string clear_optional_message =
+            "Снять признак «Договор необязателен» у " +
+            std::to_string(m_filtered_counterparties.size()) +
+            " отобранных контрагентов?";
+        if (CustomWidgets::ConfirmationModal(
+                "Групповое снятие необязательного договора",
+                "Групповая операция", clear_optional_message.c_str(), "Да",
+                "Нет", show_clear_contract_optional_popup)) {
+            ApplyContractOptionalToFiltered(false);
         }
 
         // Таблица со списком

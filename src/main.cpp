@@ -230,12 +230,13 @@ int main(int, char **) {
                 if (ImGui::MenuItem(ICON_FA_TABLE_CELLS " Импорт из TSV")) {
                     ImGuiFileDialog::Instance()->OpenDialog(
                         "ImportTsvFileDlgKey", "Выберите TSV файл для импорта",
-                        ".tsv");
+                        "TSV/CSV{.tsv,.csv}");
                 }
                 if (ImGui::MenuItem(ICON_FA_FILE_IMPORT " Импорт ЖО4 из TSV")) {
                     ImGuiFileDialog::Instance()->OpenDialog(
                         "ImportJO4FileDlgKey",
-                        "Выберите TSV файл ЖО4 для импорта", ".tsv,.csv");
+                        "Выберите TSV файл ЖО4 для импорта",
+                        "TSV/CSV{.tsv,.csv}");
                 }
                 if (ImGui::MenuItem(ICON_FA_FILE_SIGNATURE
                                     " Реестровые номера контрактов")) {

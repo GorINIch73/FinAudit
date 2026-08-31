@@ -24,6 +24,7 @@ private:
     void ClearCounterpartySelection();
     void SelectCounterparty(const Counterparty& counterparty);
     void ReconcileSelectionAfterFilter();
+    bool ApplyContractOptionalToFiltered(bool value);
 
     std::vector<Counterparty> counterparties;
     std::vector<Counterparty> m_filtered_counterparties;
@@ -42,6 +43,8 @@ private:
     bool isAdding;
     bool isDirty = false;
     bool show_delete_popup = false;
+    bool show_set_contract_optional_popup = false;
+    bool show_clear_contract_optional_popup = false;
     int counterparty_id_to_delete = -1;
     std::vector<ContractPaymentInfo> payment_info;
     std::vector<ContractPaymentInfo> m_sorted_payment_info;

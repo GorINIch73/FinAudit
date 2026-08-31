@@ -288,6 +288,7 @@ std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>> Speci
 
 void SpecialQueryView::ExecuteQuery() {
     if (dbManager && dbManager->is_open()) {
+        ++table_generation;
         dbManager->executeSelect(query.c_str(), queryResult.columns,
                                  queryResult.rows, queryResult.column_types);
         selected_cells.assign(queryResult.rows.size(), std::vector<bool>(queryResult.columns.size(), false));
@@ -374,15 +375,23 @@ void SpecialQueryView::Render() {
         ImGui::Text("Количество записей: %zu", queryResult.rows.size());
         if (!queryResult.columns.empty()) {
             if (ImGui::BeginChild("##TableScrollRegion", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar)) {
-                if (ImGui::BeginTable("special_query_result", queryResult.columns.size(),
-                                     ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_Sortable)) {
+                const std::string table_id =
+                    "special_query_result##" +
+                    std::to_string(table_generation);
+                if (ImGui::BeginTable(
+                        table_id.c_str(), queryResult.columns.size(),
+                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                            ImGuiTableFlags_Resizable |
+                            ImGuiTableFlags_ScrollX |
+                            ImGuiTableFlags_Sortable |
+                            ImGuiTableFlags_SortTristate |
+                            ImGuiTableFlags_NoSavedSettings)) {
                 for (size_t i = 0; i < queryResult.columns.size(); ++i) {
                     const bool long_text_column =
                         IsLongTextColumnName(queryResult.columns[i]);
                     ImGui::TableSetupColumn(
                         queryResult.columns[i].c_str(),
-                        ImGuiTableColumnFlags_DefaultSort |
-                            (long_text_column
+                        (long_text_column
                                  ? ImGuiTableColumnFlags_WidthFixed
                                  : ImGuiTableColumnFlags_None),
                         long_text_column ? 1200.0f : 0.0f, i);

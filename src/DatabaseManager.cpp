@@ -1,6 +1,7 @@
 #include "DatabaseManager.h"
 #include "ContractNumberUtils.h"
 #include "ExportManager.h"
+#include "PlatformUtils.h"
 #include <algorithm>
 #include <iostream>
 #include <regex>
@@ -4693,15 +4694,11 @@ DatabaseManager::getReconciliationData(const std::string &filter) {
 
         // Фильтрация
         if (!filter.empty()) {
-            std::string f = filter;
-            std::transform(f.begin(), f.end(), f.begin(), ::tolower);
-            std::string combined =
+            const std::string combined =
                 rec.payment_date + " " + rec.payment_doc_number + " " +
                 rec.counterparty_name + " " + rec.base_doc_number + " " +
                 rec.base_detail_content;
-            std::transform(combined.begin(), combined.end(), combined.begin(),
-                           ::tolower);
-            if (combined.find(f) == std::string::npos)
+            if (!utf8_icontains(combined, filter))
                 continue;
         }
 

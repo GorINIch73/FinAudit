@@ -29,6 +29,7 @@ private:
     } queryResult;
 
     ImGuiTableSortSpecs sort_specs{}; // To store sort specifications
+    unsigned int table_generation = 0;
     void SortRows();
 
     std::vector<std::vector<bool>> selected_cells;

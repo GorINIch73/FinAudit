@@ -133,7 +133,7 @@ std::string ContractsView::BuildActTotalsQuery() const {
            "INNER JOIN Payments ON PaymentDetails.payment_id = Payments.id "
            "INNER JOIN Counterparties ON "
            "Contracts.counterparty_id = Counterparties.id "
-           "WHERE Contracts.is_found = true "
+           "WHERE Contracts.is_for_checking = true "
            "GROUP BY KOSGU.kps, KOSGU.code, KOSGU.name, Contracts.id, "
            "Contracts.contract_amount"
            ") "
@@ -143,7 +143,42 @@ std::string ContractsView::BuildActTotalsQuery() const {
            "COUNT(contract_id) AS 'Договоров' "
            "FROM contract_kosgu "
            "GROUP BY kps, code, name "
-           "ORDER BY kps, code";
+           "ORDER BY kps ASC, code ASC";
+}
+
+std::string ContractsView::BuildActTotalsByYearQuery() const {
+    return "WITH payments_with_year AS ("
+           "SELECT PaymentDetails.contract_id, PaymentDetails.kosgu_id, "
+           "PaymentDetails.amount, "
+           "CASE "
+           "WHEN length(Payments.date) >= 10 AND substr(Payments.date, 5, 1) = '-' "
+           "THEN substr(Payments.date, 1, 4) "
+           "WHEN length(Payments.date) >= 10 AND substr(Payments.date, 3, 1) IN ('.', '/', '-') "
+           "THEN substr(Payments.date, 7, 4) "
+           "ELSE '' END AS payment_year "
+           "FROM PaymentDetails "
+           "INNER JOIN Payments ON PaymentDetails.payment_id = Payments.id"
+           "), contract_kosgu_year AS ("
+           "SELECT pwy.payment_year, IFNULL(KOSGU.kps, '') AS kps, "
+           "KOSGU.code AS code, KOSGU.name AS name, "
+           "Contracts.id AS contract_id, "
+           "IFNULL(Contracts.contract_amount, 0) AS contract_amount, "
+           "SUM(pwy.amount) AS payment_amount "
+           "FROM payments_with_year pwy "
+           "INNER JOIN Contracts ON pwy.contract_id = Contracts.id "
+           "INNER JOIN KOSGU ON pwy.kosgu_id = KOSGU.id "
+           "WHERE Contracts.is_for_checking = true AND pwy.payment_year <> '' "
+           "GROUP BY pwy.payment_year, KOSGU.kps, KOSGU.code, KOSGU.name, "
+           "Contracts.id, Contracts.contract_amount"
+           ") "
+           "SELECT payment_year AS 'Год платежа', kps AS 'КПС', "
+           "code AS 'КОСГУ', name AS 'Наименование', "
+           "ROUND(SUM(payment_amount), 2) AS 'Оплачено за год', "
+           "ROUND(SUM(contract_amount), 2) AS 'Стоимость договоров', "
+           "COUNT(contract_id) AS 'Договоров' "
+           "FROM contract_kosgu_year "
+           "GROUP BY payment_year, kps, code, name "
+           "ORDER BY payment_year ASC, kps ASC, code ASC";
 }
 
 std::string ContractsView::EscapeHtml(const std::string& value) {
@@ -234,7 +269,7 @@ void ContractsView::PrintActTotalsReport() {
         << ".num{text-align:right;white-space:nowrap;}"
         << "</style></head><body>";
     htmlFile << "<h1>Итоги для акта</h1>";
-    htmlFile << "<div class=\"meta\">Источник: найденные договоры, суммы по "
+    htmlFile << "<div class=\"meta\">Источник: договоры, выбранные для проверки, суммы по "
                 "расшифровкам платежей. Строк: "
              << rows.size() << "</div>";
     htmlFile << "<table><thead><tr>";
@@ -782,6 +817,15 @@ void ContractsView::Render() {
             if (uiManager) {
                 uiManager->CreateSpecialQueryView("Отчет по договорам для акта",
                                                   BuildActTotalsQuery());
+            }
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Итоги для акта по годам")) {
+            if (uiManager) {
+                uiManager->CreateSpecialQueryView(
+                    "Отчет по договорам для акта по годам",
+                    BuildActTotalsByYearQuery());
             }
         }
 
