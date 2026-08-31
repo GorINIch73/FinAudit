@@ -520,12 +520,17 @@ void KosguView::Render() {
                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                   ImGuiTableFlags_Resizable |
                                   ImGuiTableFlags_Sortable)) {
-            ImGui::TableSetupColumn("ID", 0, 0.0f, 0);
-            ImGui::TableSetupColumn("КОСГУ", ImGuiTableColumnFlags_DefaultSort,
-                                    0.0f, 1);
-            ImGui::TableSetupColumn("КПС", 0, 0.0f, 2);
+            ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed,
+                                    40.0f, 0);
+            ImGui::TableSetupColumn("КОСГУ",
+                                    ImGuiTableColumnFlags_DefaultSort |
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                    70.0f, 1);
+            ImGui::TableSetupColumn("КПС", ImGuiTableColumnFlags_WidthFixed,
+                                    100.0f, 2);
             ImGui::TableSetupColumn("Наименование", 0, 0.0f, 3);
-            ImGui::TableSetupColumn("Сумма", 0, 0.0f, 4);
+            ImGui::TableSetupColumn("Сумма", ImGuiTableColumnFlags_WidthFixed,
+                                    120.0f, 4);
             ImGui::TableHeadersRow();
 
             if (ImGuiTableSortSpecs *sort_specs = ImGui::TableGetSortSpecs()) {
@@ -745,11 +750,22 @@ void KosguView::Render() {
                     ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                         ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                         ImGuiTableFlags_ScrollY | ImGuiTableFlags_Sortable)) {
-                ImGui::TableSetupColumn("Дата", ImGuiTableColumnFlags_DefaultSort);
-                ImGui::TableSetupColumn("Номер док.");
-                ImGui::TableSetupColumn("Сумма");
-                ImGui::TableSetupColumn("Наименование контрагента");
-                ImGui::TableSetupColumn("Назначение");
+                ImGui::TableSetupColumn("Дата",
+                                        ImGuiTableColumnFlags_DefaultSort |
+                                            ImGuiTableColumnFlags_WidthFixed,
+                                        100.0f);
+                ImGui::TableSetupColumn("Номер док.",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        120.0f);
+                ImGui::TableSetupColumn("Сумма",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        120.0f);
+                ImGui::TableSetupColumn("Наименование контрагента",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        260.0f);
+                ImGui::TableSetupColumn("Назначение",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        1200.0f);
                 ImGui::TableHeadersRow();
 
                 if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {

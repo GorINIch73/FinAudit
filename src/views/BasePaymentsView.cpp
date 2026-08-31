@@ -471,11 +471,14 @@ void BasePaymentsView::Render() {
         ImGui::TableSetupColumn("Номер", 0, 0, 2);
         ImGui::TableSetupColumn("Наименование", 0, 0, 3);
         ImGui::TableSetupColumn("Контрагент", 0, 0, 4);
-        ImGui::TableSetupColumn("ПП №", 0, 0, 7);
+        ImGui::TableSetupColumn("ПП №", ImGuiTableColumnFlags_WidthFixed,
+                                110.0f, 7);
         ImGui::TableSetupColumn("ПП дата", ImGuiTableColumnFlags_WidthFixed, 80.0f, 8);
-        ImGui::TableSetupColumn("ПП контрагент", 0, 0, 11);
+        ImGui::TableSetupColumn("ПП контрагент",
+                                ImGuiTableColumnFlags_WidthFixed, 240.0f, 11);
         ImGui::TableSetupColumn("ПП сумма", ImGuiTableColumnFlags_WidthFixed, 110.0f, 9);
-        ImGui::TableSetupColumn("ПП назначение", 0, 0, 10);
+        ImGui::TableSetupColumn("ПП назначение",
+                                ImGuiTableColumnFlags_WidthFixed, 1200.0f, 10);
         ImGui::TableSetupColumn("Сумма", ImGuiTableColumnFlags_WidthFixed, 120.0f, 5);
         ImGui::TableSetupColumn("Для сверки", ImGuiTableColumnFlags_WidthFixed, 80.0f, 6);
         ImGui::TableHeadersRow();
@@ -653,9 +656,15 @@ void BasePaymentsView::Render() {
                                       ImGuiTableFlags_ScrollX |
                                       ImGuiTableFlags_Resizable)) {
                 ImGui::TableSetupColumn("Содержание");
-                ImGui::TableSetupColumn("Дебет");
-                ImGui::TableSetupColumn("Кредит");
-                ImGui::TableSetupColumn("КОСГУ");
+                ImGui::TableSetupColumn("Дебет",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        100.0f);
+                ImGui::TableSetupColumn("Кредит",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        100.0f);
+                ImGui::TableSetupColumn("КОСГУ",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        90.0f);
                 ImGui::TableSetupColumn(
                     "Сумма", ImGuiTableColumnFlags_WidthFixed, 100.0f);
                 ImGui::TableHeadersRow();

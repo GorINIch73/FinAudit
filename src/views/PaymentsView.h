@@ -124,7 +124,7 @@ private:
     int existing_entity_id = -1;
     std::vector<Regex> regexesForCreatePopup;
     int selectedRegexIdForCreatePopup = -1;
-    char editableRegexPatternForCreate[512] = "";
+    char editableRegexPatternForCreate[4096] = "";
     char regexFilterForCreatePopup[128] = "";
     bool show_save_regex_popup = false;
     char newRegexNameBuffer[128] = "";

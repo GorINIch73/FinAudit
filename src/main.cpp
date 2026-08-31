@@ -1,6 +1,11 @@
+#ifndef IMGUI_DEFINE_MATH_OPERATORS
+#define IMGUI_DEFINE_MATH_OPERATORS
+#endif
+
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include "imgui_internal.h"
 #include <GLFW/glfw3.h>
 #include <chrono>
 #include <iostream>
@@ -63,6 +68,7 @@ int main(int, char **) {
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     (void)io;
+    io.IniFilename = nullptr;
     io.ConfigFlags |=
         ImGuiConfigFlags_NavEnableKeyboard; // Включить навигацию с клавиатуры
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable; // Включить докинг
@@ -122,7 +128,12 @@ int main(int, char **) {
         ImGui::NewFrame();
 
         // Включаем возможность докинга
-        ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+        ImGuiID mainDockId =
+            ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+        ImGuiDockNode *centralDockNode =
+            ImGui::DockBuilderGetCentralNode(mainDockId);
+        uiManager.SetMainDockId(centralDockNode ? centralDockNode->ID
+                                                : mainDockId);
 
         // --- Рендеринг главного меню ---
         if (ImGui::BeginMainMenuBar()) {
@@ -269,6 +280,7 @@ int main(int, char **) {
                     bool found = false;
                     for (const auto &view : uiManager.allViews) {
                         if (dynamic_cast<SettingsView *>(view.get())) {
+                            view->RequestDock();
                             ImGui::SetWindowFocus(view->GetTitle());
                             found = true;
                             break;
@@ -290,6 +302,7 @@ int main(int, char **) {
                     bool found = false;
                     for (const auto &view : uiManager.allViews) {
                         if (dynamic_cast<SelectiveCleanView *>(view.get())) {
+                            view->RequestDock();
                             ImGui::SetWindowFocus(view->GetTitle());
                             found = true;
                             break;

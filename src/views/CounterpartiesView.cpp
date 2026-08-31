@@ -545,12 +545,25 @@ void CounterpartiesView::Render() {
                     ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                         ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
                         ImGuiTableFlags_ScrollY | ImGuiTableFlags_Sortable)) {
-                ImGui::TableSetupColumn("Дата", ImGuiTableColumnFlags_DefaultSort, 0, 0);
-                ImGui::TableSetupColumn("Номер док.", 0, 0, 1);
-                ImGui::TableSetupColumn("Сумма", 0, 0, 2);
-                ImGui::TableSetupColumn("КПС", 0, 0, 3);
-                ImGui::TableSetupColumn("КОСГУ", 0, 0, 4);
-                ImGui::TableSetupColumn("Назначение", 0, 0, 5);
+                ImGui::TableSetupColumn("Дата",
+                                        ImGuiTableColumnFlags_DefaultSort |
+                                            ImGuiTableColumnFlags_WidthFixed,
+                                        100.0f, 0);
+                ImGui::TableSetupColumn("Номер док.",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        120.0f, 1);
+                ImGui::TableSetupColumn("Сумма",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        120.0f, 2);
+                ImGui::TableSetupColumn("КПС",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        100.0f, 3);
+                ImGui::TableSetupColumn("КОСГУ",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        80.0f, 4);
+                ImGui::TableSetupColumn("Назначение",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        1200.0f, 5);
                 ImGui::TableHeadersRow();
 
                 if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {

@@ -203,6 +203,9 @@ public:
     std::vector<IntegrityIssue> getIntegrityReport();
     
     bool executeSelect(const std::string& sql, std::vector<std::string>& columns, std::vector<std::vector<std::string>>& rows);
+    bool executeSelect(const std::string& sql, std::vector<std::string>& columns,
+                       std::vector<std::vector<std::string>>& rows,
+                       std::vector<int>& column_types);
     const std::string& getLastError() const { return lastError; }
 
 private:

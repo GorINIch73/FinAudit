@@ -1,7 +1,13 @@
+#ifndef IMGUI_DEFINE_MATH_OPERATORS
+#define IMGUI_DEFINE_MATH_OPERATORS
+#endif
+
 #include "UIManager.h"
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -23,6 +29,7 @@
 #include "PlatformUtils.h"
 #include "PdfReporter.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "views/BaseView.h"
 
 #include <GLFW/glfw3.h>
@@ -34,6 +41,15 @@
 
 // Forward declaration
 struct ImGuiIO;
+
+static const char *GetImGuiWindowIdName(const char *title) {
+    if (title == nullptr) {
+        return "";
+    }
+
+    const char *explicit_id = std::strstr(title, "###");
+    return explicit_id ? explicit_id + 3 : title;
+}
 
 // --- Поиск ресурсов ---
 // Функция для поиска правильного пути к ресурсам (например, шрифтам)
@@ -97,6 +113,34 @@ std::string getAssetPath(const std::string &assetName) {
 const size_t MAX_RECENT_PATHS = 10;
 const std::string RECENT_PATHS_FILE = ".recent_dbs.txt";
 
+std::filesystem::path getUserConfigDirectory() {
+#ifdef _WIN32
+    const char *appdata = std::getenv("APPDATA");
+    if (appdata && *appdata) {
+        return std::filesystem::path(appdata) / "FnAudit";
+    }
+    const char *userprofile = std::getenv("USERPROFILE");
+    if (userprofile && *userprofile) {
+        return std::filesystem::path(userprofile) / "AppData" / "Roaming" /
+               "FnAudit";
+    }
+#else
+    const char *xdg_config_home = std::getenv("XDG_CONFIG_HOME");
+    if (xdg_config_home && *xdg_config_home) {
+        return std::filesystem::path(xdg_config_home) / "FnAudit";
+    }
+    const char *home = std::getenv("HOME");
+    if (home && *home) {
+        return std::filesystem::path(home) / ".config" / "FnAudit";
+    }
+#endif
+    return std::filesystem::current_path();
+}
+
+std::filesystem::path getRecentPathsFilePath() {
+    return getUserConfigDirectory() / RECENT_PATHS_FILE;
+}
+
 UIManager::UIManager()
     : dbManager(nullptr),
       pdfReporter(nullptr),
@@ -128,15 +172,20 @@ void UIManager::AddRecentDbPath(std::string path) {
 }
 
 void UIManager::LoadRecentDbPaths() {
-    std::ifstream file(RECENT_PATHS_FILE);
-    if (!file.is_open())
+    const std::filesystem::path config_path = getRecentPathsFilePath();
+    std::ifstream file(config_path);
+    if (!file.is_open() && std::filesystem::exists(RECENT_PATHS_FILE)) {
+        file.open(RECENT_PATHS_FILE);
+    }
+    if (!file.is_open()) {
         return;
+    }
 
     recentDbPaths.clear();
-    std::string path;
-    while (std::getline(file, path)) {
-        if (!path.empty()) {
-            recentDbPaths.push_back(path);
+    std::string recent_path;
+    while (std::getline(file, recent_path)) {
+        if (!recent_path.empty()) {
+            recentDbPaths.push_back(recent_path);
         }
     }
 
@@ -146,9 +195,22 @@ void UIManager::LoadRecentDbPaths() {
 }
 
 void UIManager::SaveRecentDbPaths() {
-    std::ofstream file(RECENT_PATHS_FILE);
-    if (!file.is_open())
+    const std::filesystem::path path = getRecentPathsFilePath();
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    if (ec) {
+        std::cerr << "Failed to create config directory: "
+                  << path.parent_path() << " - " << ec.message()
+                  << std::endl;
         return;
+    }
+
+    std::ofstream file(path);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open recent DB list for writing: " << path
+                  << std::endl;
+        return;
+    }
     for (const auto &path : recentDbPaths) {
         file << path << std::endl;
     }
@@ -177,6 +239,17 @@ void UIManager::SetExportManager(ExportManager *manager) {
 }
 
 void UIManager::SetWindow(GLFWwindow *w) { window = w; }
+
+void UIManager::SetMainDockId(ImGuiID dock_id) { mainDockId = dock_id; }
+
+void UIManager::DockViewOnCreate(BaseView *view) {
+    if (mainDockId == 0 || view == nullptr) {
+        return;
+    }
+
+    ImGui::DockBuilderDockWindow(GetImGuiWindowIdName(view->GetTitle()),
+                                 mainDockId);
+}
 
 bool UIManager::LoadDatabase(const std::string &path) {
     if (!SaveAllViews()) {
@@ -212,6 +285,7 @@ void UIManager::ShowContractRegistryNumbersView() {
     for (const auto &view : allViews) {
         if (auto existing_view = dynamic_cast<ContractRegistryNumbersView *>(view.get())) {
             existing_view->IsVisible = true;
+            existing_view->RequestDock();
             ImGui::SetWindowFocus(existing_view->GetTitle());
             return; // Found and handled
         }
@@ -300,6 +374,24 @@ void UIManager::ShowError(const std::string& message) {
     showErrorPopup = true;
 }
 
+bool UIManager::DisplayFileDialog(const char* key) {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImVec2 work_pos = viewport ? viewport->WorkPos : ImVec2(0.0f, 0.0f);
+    const ImVec2 work_size =
+        viewport ? viewport->WorkSize : ImGui::GetIO().DisplaySize;
+    ImVec2 dialog_size(work_size.x * 0.7f, work_size.y * 0.7f);
+    dialog_size.x = std::max(700.0f, std::min(dialog_size.x, work_size.x));
+    dialog_size.y = std::max(450.0f, std::min(dialog_size.y, work_size.y));
+
+    ImGui::SetNextWindowSize(dialog_size, ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(
+        ImVec2(work_pos.x + work_size.x * 0.5f,
+               work_pos.y + work_size.y * 0.5f),
+        ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    return ImGuiFileDialog::Instance()->Display(
+        key, ImGuiWindowFlags_None, dialog_size, work_size);
+}
+
 SpecialQueryView *UIManager::CreateSpecialQueryView(const std::string &title,
                                                     const std::string &query) {
     auto view = std::make_unique<SpecialQueryView>(title, query);
@@ -310,6 +402,7 @@ SpecialQueryView *UIManager::CreateSpecialQueryView(const std::string &title,
     std::string newTitle = title + "###" + std::to_string(viewIdCounter++);
     view->SetTitle(newTitle);
     view->IsVisible = true;
+    view->RequestDock();
     allViews.push_back(std::move(view));
     return viewPtr;
 }
@@ -602,7 +695,7 @@ void UIManager::LoadFonts() {
 }
 
 void UIManager::HandleFileDialogs() {
-    if (ImGuiFileDialog::Instance()->Display("ChooseDbFileDlgKey")) {
+    if (DisplayFileDialog("ChooseDbFileDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             std::string filePathName =
                 ImGuiFileDialog::Instance()->GetFilePathName();
@@ -616,7 +709,7 @@ void UIManager::HandleFileDialogs() {
         ImGuiFileDialog::Instance()->Close();
     }
 
-    if (ImGuiFileDialog::Instance()->Display("OpenDbFileDlgKey")) {
+    if (DisplayFileDialog("OpenDbFileDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             std::string filePathName =
                 ImGuiFileDialog::Instance()->GetFilePathName();
@@ -625,7 +718,7 @@ void UIManager::HandleFileDialogs() {
         ImGuiFileDialog::Instance()->Close();
     }
 
-    if (ImGuiFileDialog::Instance()->Display("SaveDbAsFileDlgKey")) {
+    if (DisplayFileDialog("SaveDbAsFileDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             std::string newFilePath =
                 ImGuiFileDialog::Instance()->GetFilePathName();
@@ -655,7 +748,7 @@ void UIManager::HandleFileDialogs() {
         ImGuiFileDialog::Instance()->Close();
     }
 
-    if (ImGuiFileDialog::Instance()->Display("ImportTsvFileDlgKey")) {
+    if (DisplayFileDialog("ImportTsvFileDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             std::string filePathName =
                 ImGuiFileDialog::Instance()->GetFilePathName();
@@ -668,7 +761,7 @@ void UIManager::HandleFileDialogs() {
         ImGuiFileDialog::Instance()->Close();
     }
 
-    if (ImGuiFileDialog::Instance()->Display("ImportJO4FileDlgKey")) {
+    if (DisplayFileDialog("ImportJO4FileDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             std::string filePathName =
                 ImGuiFileDialog::Instance()->GetFilePathName();
@@ -679,7 +772,7 @@ void UIManager::HandleFileDialogs() {
         ImGuiFileDialog::Instance()->Close();
     }
 
-    if (ImGuiFileDialog::Instance()->Display("SavePdfFileDlgKey")) {
+    if (DisplayFileDialog("SavePdfFileDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             std::string filePathName =
                 ImGuiFileDialog::Instance()->GetFilePathName();
@@ -709,19 +802,19 @@ void UIManager::HandleFileDialogs() {
     }
 
     // Export Dialogs
-    if (ImGuiFileDialog::Instance()->Display("ExportKosguDlgKey")) {
+    if (DisplayFileDialog("ExportKosguDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             ExportKosgu(ImGuiFileDialog::Instance()->GetFilePathName());
         }
         ImGuiFileDialog::Instance()->Close();
     }
-    if (ImGuiFileDialog::Instance()->Display("ExportSuspiciousWordsDlgKey")) {
+    if (DisplayFileDialog("ExportSuspiciousWordsDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             ExportSuspiciousWords(ImGuiFileDialog::Instance()->GetFilePathName());
         }
         ImGuiFileDialog::Instance()->Close();
     }
-    if (ImGuiFileDialog::Instance()->Display("ExportRegexesDlgKey")) {
+    if (DisplayFileDialog("ExportRegexesDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             ExportRegexes(ImGuiFileDialog::Instance()->GetFilePathName());
         }
@@ -729,19 +822,19 @@ void UIManager::HandleFileDialogs() {
     }
 
     // Import Dialogs
-    if (ImGuiFileDialog::Instance()->Display("ImportKosguDlgKey")) {
+    if (DisplayFileDialog("ImportKosguDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             ImportKosgu(ImGuiFileDialog::Instance()->GetFilePathName());
         }
         ImGuiFileDialog::Instance()->Close();
     }
-    if (ImGuiFileDialog::Instance()->Display("ImportSuspiciousWordsDlgKey")) {
+    if (DisplayFileDialog("ImportSuspiciousWordsDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             ImportSuspiciousWords(ImGuiFileDialog::Instance()->GetFilePathName());
         }
         ImGuiFileDialog::Instance()->Close();
     }
-    if (ImGuiFileDialog::Instance()->Display("ImportRegexesDlgKey")) {
+    if (DisplayFileDialog("ImportRegexesDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             ImportRegexes(ImGuiFileDialog::Instance()->GetFilePathName());
         }
@@ -749,7 +842,7 @@ void UIManager::HandleFileDialogs() {
     }
 
     // Contract registry-number import/export dialogs
-    if (ImGuiFileDialog::Instance()->Display("ChooseFileDlgKey_IKZ_Service")) {
+    if (DisplayFileDialog("ChooseFileDlgKey_IKZ_Service")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
             // Find contract registry-number view and trigger import
@@ -763,7 +856,7 @@ void UIManager::HandleFileDialogs() {
         ImGuiFileDialog::Instance()->Close();
     }
 
-    if (ImGuiFileDialog::Instance()->Display("ExportContractsDlgKey")) {
+    if (DisplayFileDialog("ExportContractsDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
             // Find contract registry-number view and trigger export
@@ -783,6 +876,21 @@ void UIManager::HandleFileDialogs() {
 void UIManager::Render() {
     // Render all views
     for (auto &view : allViews) {
+        if (mainDockId != 0 && view->IsVisible) {
+            bool forceDock =
+                view->DockOnNextRender || view->DockOnNextRenderFrames > 0;
+            if (forceDock) {
+                ImGui::DockBuilderDockWindow(
+                    GetImGuiWindowIdName(view->GetTitle()), mainDockId);
+            }
+            ImGui::SetNextWindowDockID(
+                mainDockId, forceDock ? ImGuiCond_Always
+                                      : ImGuiCond_Appearing);
+            view->DockOnNextRender = false;
+            if (view->DockOnNextRenderFrames > 0) {
+                --view->DockOnNextRenderFrames;
+            }
+        }
         view->Render();
     }
 

@@ -76,8 +76,15 @@ bool IsAmountLike(const std::string& value) {
         break;
     }
 
-    if (!has_integer_digit || pos >= trimmed.size() ||
-        (trimmed[pos] != '.' && trimmed[pos] != ',')) {
+    if (!has_integer_digit) {
+        return false;
+    }
+
+    if (pos == trimmed.size()) {
+        return true;
+    }
+
+    if (trimmed[pos] != '.' && trimmed[pos] != ',') {
         return false;
     }
 
@@ -91,9 +98,67 @@ bool IsAmountLike(const std::string& value) {
     return decimal_digits == 2 && pos == trimmed.size();
 }
 
-bool NeedsTextPrefixForSpreadsheet(const std::string& value) {
+std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+bool IsAmountColumnName(const std::string& column_name) {
+    const std::string lower = ToLowerAscii(column_name);
+    return column_name.find("сумм") != std::string::npos ||
+           column_name.find("Сумм") != std::string::npos ||
+           column_name.find("СУММ") != std::string::npos ||
+           column_name.find("итого") != std::string::npos ||
+           column_name.find("Итого") != std::string::npos ||
+           column_name.find("ИТОГО") != std::string::npos ||
+           column_name.find("остат") != std::string::npos ||
+           column_name.find("Остат") != std::string::npos ||
+           column_name.find("ОСТАТ") != std::string::npos ||
+           column_name.find("оплат") != std::string::npos ||
+           column_name.find("Оплат") != std::string::npos ||
+           column_name.find("ОПЛАТ") != std::string::npos ||
+           column_name.find("платеж") != std::string::npos ||
+           column_name.find("Платеж") != std::string::npos ||
+           column_name.find("ПЛАТЕЖ") != std::string::npos ||
+           column_name.find("платёж") != std::string::npos ||
+           column_name.find("Платёж") != std::string::npos ||
+           column_name.find("ПЛАТЁЖ") != std::string::npos ||
+           lower.find("amount") != std::string::npos ||
+           lower.find("total") != std::string::npos ||
+           lower.find("sum") != std::string::npos ||
+           lower.find("balance") != std::string::npos ||
+           lower.find("payment") != std::string::npos;
+}
+
+bool IsLongTextColumnName(const std::string& column_name) {
+    const std::string lower = ToLowerAscii(column_name);
+    return column_name.find("Назнач") != std::string::npos ||
+           column_name.find("назнач") != std::string::npos ||
+           column_name.find("Содерж") != std::string::npos ||
+           column_name.find("содерж") != std::string::npos ||
+           lower.find("description") != std::string::npos ||
+           lower.find("payment_desc") != std::string::npos ||
+           lower.find("details") != std::string::npos ||
+           lower.find("content") != std::string::npos;
+}
+
+bool IsSQLiteNumericType(int type) {
+    return type == SQLITE_INTEGER || type == SQLITE_FLOAT;
+}
+
+bool NeedsTextPrefixForSpreadsheet(
+    const std::string& value,
+    const std::string& column_name,
+    int sqlite_type) {
     const std::string trimmed = TrimCopy(value);
-    if (trimmed.empty() || IsAmountLike(trimmed)) {
+    if (trimmed.empty()) {
+        return false;
+    }
+
+    if (IsSQLiteNumericType(sqlite_type) ||
+        (IsAmountColumnName(column_name) && IsAmountLike(trimmed))) {
         return false;
     }
 
@@ -112,9 +177,13 @@ bool NeedsTextPrefixForSpreadsheet(const std::string& value) {
     return has_digit;
 }
 
-std::string FormatCellForSpreadsheetCopy(const std::string& value) {
+std::string FormatCellForSpreadsheetCopy(
+    const std::string& value,
+    const std::string& column_name,
+    int sqlite_type) {
     static const std::string zero_width_space = "\xE2\x80\x8B";
-    if (NeedsTextPrefixForSpreadsheet(value) && value.rfind(zero_width_space, 0) != 0) {
+    if (NeedsTextPrefixForSpreadsheet(value, column_name, sqlite_type) &&
+        value.rfind(zero_width_space, 0) != 0) {
         return zero_width_space + value;
     }
     return value;
@@ -219,12 +288,14 @@ std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>> Speci
 
 void SpecialQueryView::ExecuteQuery() {
     if (dbManager && dbManager->is_open()) {
-        dbManager->executeSelect(query.c_str(), queryResult.columns, queryResult.rows);
+        dbManager->executeSelect(query.c_str(), queryResult.columns,
+                                 queryResult.rows, queryResult.column_types);
         selected_cells.assign(queryResult.rows.size(), std::vector<bool>(queryResult.columns.size(), false));
         last_clicked_cell = ImVec2(-1, -1);
         CalculateTotals();
     } else {
         queryResult.columns.clear();
+        queryResult.column_types.clear();
         queryResult.rows.clear();
         selected_cells.clear();
         std::cerr << "No database open to execute SQL query." << std::endl;
@@ -280,7 +351,13 @@ void SpecialQueryView::Render() {
                         if (j > 0) {
                             ss << "\t";
                         }
-                        ss << FormatCellForSpreadsheetCopy(queryResult.rows[i][j]);
+                        const int sqlite_type =
+                            j < queryResult.column_types.size()
+                                ? queryResult.column_types[j]
+                                : SQLITE_NULL;
+                        ss << FormatCellForSpreadsheetCopy(
+                            queryResult.rows[i][j], queryResult.columns[j],
+                            sqlite_type);
                     }
                     first_row = false;
                 }
@@ -300,7 +377,15 @@ void SpecialQueryView::Render() {
                 if (ImGui::BeginTable("special_query_result", queryResult.columns.size(),
                                      ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_Sortable)) {
                 for (size_t i = 0; i < queryResult.columns.size(); ++i) {
-                    ImGui::TableSetupColumn(queryResult.columns[i].c_str(), ImGuiTableColumnFlags_DefaultSort, 0.0f, i);
+                    const bool long_text_column =
+                        IsLongTextColumnName(queryResult.columns[i]);
+                    ImGui::TableSetupColumn(
+                        queryResult.columns[i].c_str(),
+                        ImGuiTableColumnFlags_DefaultSort |
+                            (long_text_column
+                                 ? ImGuiTableColumnFlags_WidthFixed
+                                 : ImGuiTableColumnFlags_None),
+                        long_text_column ? 1200.0f : 0.0f, i);
                 }
                 ImGui::TableHeadersRow();
 
@@ -410,18 +495,29 @@ void SpecialQueryView::SortRows() {
                           continue; // Should not happen if columnUserID is set correctly
                       }
 
-                      double val_a, val_b;
-                      std::string str_a = a[column_idx];
-                      std::string str_b = b[column_idx];
-                      std::replace(str_a.begin(), str_a.end(), ',', '.');
-                      std::replace(str_b.begin(), str_b.end(), ',', '.');
-
-                      bool is_numeric_a = (sscanf(str_a.c_str(), "%lf", &val_a) == 1);
-                      bool is_numeric_b = (sscanf(str_b.c_str(), "%lf", &val_b) == 1);
+                      const bool numeric_column =
+                          column_idx >= 0 &&
+                          static_cast<size_t>(column_idx) <
+                              queryResult.column_types.size() &&
+                          IsSQLiteNumericType(
+                              queryResult.column_types[column_idx]);
 
                       int delta = 0;
-                      if (is_numeric_a && is_numeric_b) {
+                      if (numeric_column) {
+                          double val_a = 0.0;
+                          double val_b = 0.0;
+                          std::string str_a = a[column_idx];
+                          std::string str_b = b[column_idx];
+                          std::replace(str_a.begin(), str_a.end(), ',', '.');
+                          std::replace(str_b.begin(), str_b.end(), ',', '.');
+                          const bool is_numeric_a =
+                              sscanf(str_a.c_str(), "%lf", &val_a) == 1;
+                          const bool is_numeric_b =
+                              sscanf(str_b.c_str(), "%lf", &val_b) == 1;
                           delta = (val_a < val_b) ? -1 : (val_a > val_b) ? 1 : 0;
+                          if (!is_numeric_a || !is_numeric_b) {
+                              delta = a[column_idx].compare(b[column_idx]);
+                          }
                       } else {
                           delta = a[column_idx].compare(b[column_idx]);
                       }
@@ -439,6 +535,12 @@ void SpecialQueryView::CalculateTotals() {
     is_numeric_column.assign(queryResult.columns.size(), true);
 
     for (size_t col = 0; col < queryResult.columns.size(); ++col) {
+        if (col < queryResult.column_types.size() &&
+            !IsSQLiteNumericType(queryResult.column_types[col])) {
+            is_numeric_column[col] = false;
+            continue;
+        }
+
         for (const auto& row : queryResult.rows) {
             if (col >= row.size()) continue;
 

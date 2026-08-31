@@ -1105,13 +1105,20 @@ void PaymentsView::Render() {
             ImGui::TableSetupColumn(
                 "Дата",
                 ImGuiTableColumnFlags_DefaultSort |
-                    ImGuiTableColumnFlags_PreferSortDescending,
-                0.0f, 0);
-            ImGui::TableSetupColumn("Номер", 0, 0.0f, 1);
-            ImGui::TableSetupColumn("Сумма", 0, 0.0f, 2);
-            ImGui::TableSetupColumn("Контрагент", 0, 0.0f, 3);
+                    ImGuiTableColumnFlags_PreferSortDescending |
+                    ImGuiTableColumnFlags_WidthFixed,
+                100.0f, 0);
+            ImGui::TableSetupColumn("Номер",
+                                    ImGuiTableColumnFlags_WidthFixed, 120.0f,
+                                    1);
+            ImGui::TableSetupColumn("Сумма",
+                                    ImGuiTableColumnFlags_WidthFixed, 120.0f,
+                                    2);
+            ImGui::TableSetupColumn("Контрагент",
+                                    ImGuiTableColumnFlags_WidthFixed, 260.0f,
+                                    3);
             ImGui::TableSetupColumn(
-                "Назначение", ImGuiTableColumnFlags_WidthFixed, 600.0f, 4);
+                "Назначение", ImGuiTableColumnFlags_WidthFixed, 1200.0f, 4);
             ImGui::TableSetupColumn(
                 "Примечание", ImGuiTableColumnFlags_WidthFixed, 300.0f, 5);
             ImGui::TableHeadersRow();
@@ -1648,9 +1655,15 @@ void PaymentsView::Render() {
                                   ImGuiTableFlags_Borders |
                                       ImGuiTableFlags_RowBg |
                                       ImGuiTableFlags_Resizable)) {
-                ImGui::TableSetupColumn("Сумма");
-                ImGui::TableSetupColumn("КПС");
-                ImGui::TableSetupColumn("КОСГУ");
+                ImGui::TableSetupColumn("Сумма",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        120.0f);
+                ImGui::TableSetupColumn("КПС",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        100.0f);
+                ImGui::TableSetupColumn("КОСГУ",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        70.0f);
                 ImGui::TableSetupColumn("Договор");
                 ImGui::TableHeadersRow();
 
@@ -2236,9 +2249,15 @@ void PaymentsView::RenderJo4DocumentsPanel() {
                                       ImGuiTableFlags_Resizable |
                                       ImGuiTableFlags_ScrollX)) {
                 ImGui::TableSetupColumn("Содержание", ImGuiTableColumnFlags_WidthFixed, 380.0f);
-                ImGui::TableSetupColumn("Дебет");
-                ImGui::TableSetupColumn("Кредит");
-                ImGui::TableSetupColumn("КОСГУ");
+                ImGui::TableSetupColumn("Дебет",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        100.0f);
+                ImGui::TableSetupColumn("Кредит",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        100.0f);
+                ImGui::TableSetupColumn("КОСГУ",
+                                        ImGuiTableColumnFlags_WidthFixed,
+                                        90.0f);
                 ImGui::TableSetupColumn("Сумма");
                 ImGui::TableHeadersRow();
 

@@ -43,6 +43,7 @@ public:
     void SetImportManager(ImportManager* importManager);
     void SetExportManager(ExportManager* exportManager);
     void SetWindow(GLFWwindow* window);
+    void SetMainDockId(ImGuiID dock_id);
     bool LoadDatabase(const std::string& path); // New method
     void AddRecentDbPath(std::string path);
     void HandleFileDialogs();
@@ -88,6 +89,8 @@ public:
         }
         view->SetTitle(title);
         view->IsVisible = true;
+        view->RequestDock();
+        DockViewOnCreate(view.get());
         allViews.push_back(std::move(view));
         return viewPtr;
     }
@@ -111,11 +114,14 @@ private:
     void LoadRecentDbPaths();
     void SaveRecentDbPaths();
     void LoadFonts();
+    bool DisplayFileDialog(const char* key);
+    void DockViewOnCreate(BaseView* view);
 
     DatabaseManager* dbManager;
     PdfReporter* pdfReporter;
     GLFWwindow* window;
     int viewIdCounter = 0;
+    ImGuiID mainDockId = 0;
     int appliedFontSize = 0;
     bool fontsLoaded = false;
 };

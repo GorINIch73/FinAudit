@@ -154,7 +154,7 @@ static const char *DEFAULT_CONTRACTS_REGEX =
     "(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
     "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)"
     "\\s*(?:N|№)?\\s*"
-    "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?=[0-9])[0-9A-Za-zА-Яа-я/_.-]+){0,4})"
+    "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?!(?:\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}))[0-9][0-9A-Za-zА-Яа-я/_.-]*){0,4})"
     "(?:(?!(?:УПД|[Аа]кт|[Сс]чёт|[Сс]чет|[Сс]ч\\.?|[Нн]акладн))[\\s\\S])"
     "{0,80}?"
     "(\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|"
@@ -348,31 +348,10 @@ void DatabaseManager::checkAndUpdateDatabaseSchema() {
         "('Контракты', "
         "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|[Кк]онтракт("
         "?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)\\s*(?:N|№)?\\s*"
-        "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?=[0-9])[0-9A-Za-zА-Яа-я/_.-]+){0,4})"
+        "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?!(?:\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}))[0-9][0-9A-Za-zА-Яа-я/_.-]*){0,4})"
         "(?:(?!(?:УПД|[Аа]кт|[Сс]чёт|[Сс]чет|[Сс]ч\\.?|[Нн]акладн))[\\s\\S]){0,80}?"
         "(\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|"
         "\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2})');");
-    execute(
-        "UPDATE Regexes SET pattern = "
-        "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|[Кк]онтракт("
-        "?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)\\s*(?:N|№)?\\s*"
-        "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?=[0-9])[0-9A-Za-zА-Яа-я/_.-]+){0,4})"
-        "(?:(?!(?:УПД|[Аа]кт|[Сс]чёт|[Сс]чет|[Сс]ч\\.?|[Нн]акладн))[\\s\\S]){0,80}?"
-        "(\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|"
-        "\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2})' "
-        "WHERE name = 'Контракты' AND pattern IN ("
-        "'(?:по контракту|по контр|Контракт|дог\\.|К-т)(?: "
-        "№)?\\s*([^\\s,]+)\\s*(?:от\\s*)?"
-        "(\\d{2}\\.\\d{2}\\.(?:\\d{4}|\\d{2}))', "
-        "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
-        "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|К-т)\\s*(?:N|№)?\\s*"
-        "([^\\s,;]+)\\s*(?:от\\s*)?"
-        "(\\d{1,2}[.\\/-]\\d{1,2}[.\\/-](?:\\d{4}|\\d{2})|"
-        "\\d{4}[.\\/-]\\d{1,2}[.\\/-]\\d{1,2})', "
-        "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|[Кк]онтракт("
-        "?:у|а|ом)?|[Кк]онтр\\.?|К-т)\\s*(?:N|№)?\\s*([^\\s,;]+)\\s*[\\s\\S]*"
-        "?(?:от\\s*)?(\\d{1,2}[.\\/-]\\d{1,2}[.\\/"
-        "-](?:\\d{4}|\\d{2})|\\d{4}[.\\/-]\\d{1,2}[.\\/-]\\d{1,2})')");
     execute("INSERT OR IGNORE INTO Regexes (name, pattern) VALUES "
             "('КОСГУ', 'К(\\d{3})');");
 
@@ -900,7 +879,7 @@ bool DatabaseManager::createDatabase(const std::string &filepath) {
         "INSERT OR IGNORE INTO Regexes (name, pattern) VALUES ('Контракты', "
         "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
         "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)\\s*(?:N|№)?\\s*"
-        "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?=[0-9])[0-9A-Za-zА-Яа-я/_.-]+){0,4})"
+        "([0-9A-Za-zА-Яа-я/_.-]+(?:\\s+(?!(?:\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}))[0-9][0-9A-Za-zА-Яа-я/_.-]*){0,4})"
         "(?:(?!(?:УПД|[Аа]кт|[Сс]чёт|[Сс]чет|[Сс]ч\\.?|[Нн]акладн))[\\s\\S]){0,80}?"
         "(\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*(?:\\d{4}|\\d{2})|"
         "\\d{4}\\s*[.\\/-]\\s*\\d{1,2}\\s*[.\\/-]\\s*\\d{1,2})'"
@@ -913,20 +892,6 @@ bool DatabaseManager::createDatabase(const std::string &filepath) {
             close();
             return false;
         }
-    }
-
-    if (!execute("UPDATE Regexes SET pattern = "
-                 "'(?:(?:по|к)\\s+)?(?:[Дд]оговор(?:у|а|ом)?|[Дд]ог\\.?|"
-                 "[Кк]онтракт(?:у|а|ом)?|[Кк]онтр\\.?|[Кк]онт\\.?|[Кк]он\\.?|К-т)\\s*(?:N|№)?\\s*"
-                 "([^\\s,;]+)\\s*(?:от\\s*)?"
-                 "(\\d{1,2}[.\\/-]\\d{1,2}[.\\/-](?:\\d{4}|\\d{2})|"
-                 "\\d{4}[.\\/-]\\d{1,2}[.\\/-]\\d{1,2})' "
-                 "WHERE name = 'Контракты' AND pattern = "
-                 "'(?:по контракту|по контр|Контракт|дог\\.|К-т)(?: "
-                 "№)?\\s*([^\\s,]+)\\s*(?:от\\s*)?"
-                 "(\\d{2}\\.\\d{2}\\.(?:\\d{4}|\\d{2}))';")) {
-        close();
-        return false;
     }
 
     checkAndUpdateDatabaseSchema();
@@ -3255,6 +3220,74 @@ bool DatabaseManager::executeSelect(
         return false;
     }
 
+    return true;
+}
+
+bool DatabaseManager::executeSelect(
+    const std::string &sql, std::vector<std::string> &columns,
+    std::vector<std::vector<std::string>> &rows,
+    std::vector<int> &column_types) {
+    if (!db)
+        return false;
+
+    columns.clear();
+    rows.clear();
+    column_types.clear();
+
+    sqlite3_stmt *stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        lastError = sqlite3_errmsg(db);
+        std::cerr << "SQL SELECT prepare error: " << lastError << std::endl;
+        return false;
+    }
+
+    const int column_count = sqlite3_column_count(stmt);
+    columns.reserve(column_count);
+    column_types.assign(column_count, SQLITE_NULL);
+    for (int col = 0; col < column_count; ++col) {
+        const char *name = sqlite3_column_name(stmt, col);
+        columns.emplace_back(name ? name : "");
+    }
+
+    auto is_numeric_type = [](int type) {
+        return type == SQLITE_INTEGER || type == SQLITE_FLOAT;
+    };
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        std::vector<std::string> row;
+        row.reserve(column_count);
+        for (int col = 0; col < column_count; ++col) {
+            const int type = sqlite3_column_type(stmt, col);
+            const unsigned char *text = sqlite3_column_text(stmt, col);
+            row.emplace_back(text ? reinterpret_cast<const char *>(text)
+                                  : "NULL");
+
+            if (type == SQLITE_NULL) {
+                continue;
+            }
+            if (column_types[col] == SQLITE_NULL) {
+                column_types[col] = type;
+            } else if (is_numeric_type(column_types[col]) &&
+                       is_numeric_type(type)) {
+                if (type == SQLITE_FLOAT) {
+                    column_types[col] = SQLITE_FLOAT;
+                }
+            } else if (column_types[col] != type) {
+                column_types[col] = SQLITE_TEXT;
+            }
+        }
+        rows.push_back(std::move(row));
+    }
+
+    if (rc != SQLITE_DONE) {
+        lastError = sqlite3_errmsg(db);
+        std::cerr << "SQL SELECT step error: " << lastError << std::endl;
+        sqlite3_finalize(stmt);
+        return false;
+    }
+
+    sqlite3_finalize(stmt);
     return true;
 }
 

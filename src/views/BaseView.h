@@ -24,8 +24,14 @@ public:
     virtual void OnDeactivate() {}
     virtual bool ForceSave() { return true; }
     virtual void RefreshData() {}
+    void RequestDock() {
+        DockOnNextRender = true;
+        DockOnNextRenderFrames = 5;
+    }
 
     bool IsVisible = false;
+    bool DockOnNextRender = false;
+    int DockOnNextRenderFrames = 0;
 
     protected:
     DatabaseManager* dbManager = nullptr;

@@ -24,6 +24,7 @@ private:
     std::string query;
     struct QueryResult {
         std::vector<std::string> columns;
+        std::vector<int> column_types;
         std::vector<std::vector<std::string>> rows;
     } queryResult;
 

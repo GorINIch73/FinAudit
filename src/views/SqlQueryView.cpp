@@ -1,7 +1,31 @@
 #include "SqlQueryView.h"
 #include "../IconsFontAwesome6.h"
+#include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <iostream>
+
+namespace {
+std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+bool IsLongTextColumnName(const std::string& column_name) {
+    const std::string lower = ToLowerAscii(column_name);
+    return column_name.find("Назнач") != std::string::npos ||
+           column_name.find("назнач") != std::string::npos ||
+           column_name.find("Содерж") != std::string::npos ||
+           column_name.find("содерж") != std::string::npos ||
+           lower.find("description") != std::string::npos ||
+           lower.find("payment_desc") != std::string::npos ||
+           lower.find("details") != std::string::npos ||
+           lower.find("content") != std::string::npos;
+}
+
+}
 
 SqlQueryView::SqlQueryView() {
     Title = "SQL Запрос";
@@ -59,7 +83,13 @@ void SqlQueryView::Render() {
                     ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                         ImGuiTableFlags_Resizable)) {
                 for (const auto &col : queryResult.columns) {
-                    ImGui::TableSetupColumn(col.c_str());
+                    const bool long_text_column = IsLongTextColumnName(col);
+                    ImGui::TableSetupColumn(
+                        col.c_str(),
+                        long_text_column
+                            ? ImGuiTableColumnFlags_WidthFixed
+                            : ImGuiTableColumnFlags_None,
+                        long_text_column ? 1200.0f : 0.0f);
                 }
                 ImGui::TableHeadersRow();
 
