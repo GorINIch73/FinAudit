@@ -15,9 +15,11 @@ public:
     std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>> GetDataAsStrings() override;
 
 private:
+    std::string odsStatus;
     char queryInputBuffer[4096];
     struct QueryResult {
         std::vector<std::string> columns;
+        std::vector<int> column_types;
         std::vector<std::vector<std::string>> rows;
     } queryResult;
 };

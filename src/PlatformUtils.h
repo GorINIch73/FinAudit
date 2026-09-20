@@ -77,7 +77,17 @@ inline std::filesystem::path platformPathFromUtf8(const std::string &path) {
 #include <strings.h>
 
 inline bool platformOpen(const std::string &target) {
-    std::string command = "xdg-open \"" + target + "\"";
+    std::string quoted = "'";
+    for (char c : target) {
+        if (c == '\'') quoted += "'\\''";
+        else quoted += c;
+    }
+    quoted += "'";
+#ifdef __APPLE__
+    std::string command = "open " + quoted;
+#else
+    std::string command = "xdg-open " + quoted;
+#endif
     return std::system(command.c_str()) == 0;
 }
 

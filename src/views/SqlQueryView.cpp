@@ -1,4 +1,5 @@
 #include "SqlQueryView.h"
+#include "../OdsExporter.h"
 #include "../IconsFontAwesome6.h"
 #include <algorithm>
 #include <cctype>
@@ -65,14 +66,24 @@ void SqlQueryView::Render() {
         if (ImGui::Button(ICON_FA_PLAY " Выполнить")) {
             if (dbManager && dbManager->is_open()) {
                 dbManager->executeSelect(queryInputBuffer, queryResult.columns,
-                                         queryResult.rows);
+                                         queryResult.rows, queryResult.column_types);
             } else {
                 queryResult.columns.clear();
+                queryResult.column_types.clear();
                 queryResult.rows.clear();
                 std::cerr << "No database open to execute SQL query."
                           << std::endl;
             }
         }
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(queryResult.columns.empty());
+        if (ImGui::Button(ICON_FA_FILE_EXCEL " Открыть ODS")) {
+            odsStatus = OdsExporter::Open(queryResult.columns, queryResult.rows,
+                                          queryResult.column_types);
+        }
+        ImGui::EndDisabled();
+        if (!odsStatus.empty()) ImGui::TextWrapped("%s", odsStatus.c_str());
 
         ImGui::Separator();
         ImGui::Text("Результат:");

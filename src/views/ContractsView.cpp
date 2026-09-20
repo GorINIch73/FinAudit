@@ -694,6 +694,8 @@ void ContractsView::Render() {
                 std::ostringstream oss;
                 oss << "SELECT c.id AS ID, c.number AS 'Номер договора'"
                        ", c.date AS 'Дата договора', cp.name AS 'Контрагент'"
+                       ", COALESCE(c.contract_amount, 0.0) AS 'Сумма договора'"
+                       ", c.procurement_code AS 'Реестровый номер'"
                        ", COALESCE(ds.total_details_amount, 0.0) AS 'Всего "
                        "сумма"
                        "по расшифровкам'"
@@ -731,6 +733,8 @@ void ContractsView::Render() {
                     "Отчет по договорам",
                     "SELECT c.number AS 'Номер договора'"
                     ", c.date AS 'Дата договора', cp.name AS 'Контрагент'"
+                    ", COALESCE(c.contract_amount, 0.0) AS 'Сумма договора'"
+                    ", c.procurement_code AS 'Реестровый номер'"
                     ", COALESCE(ds.total_details_amount, 0.0) AS 'Всего сумма"
                     "по расшифровкам'"
                     ", COALESCE(ds.details_count, 0) AS 'Количество "
@@ -756,6 +760,8 @@ void ContractsView::Render() {
                 std::ostringstream oss;
                 oss << "SELECT c.number AS 'Номер договора'"
                        ", c.date AS 'Дата договора'"
+                       ", COALESCE(c.contract_amount, 0.0) AS 'Сумма договора'"
+                       ", c.procurement_code AS 'Реестровый номер'"
                        ", cp.name AS 'Контрагент по договору'"
                        ", p.date AS 'Дата платежа'"
                        ", p.doc_number AS 'Номер платежа' "
@@ -791,6 +797,8 @@ void ContractsView::Render() {
                     "Отчет по договорам",
                     "SELECT c.number AS 'Номер договора'"
                     ", c.date AS 'Дата договора'"
+                    ", COALESCE(c.contract_amount, 0.0) AS 'Сумма договора'"
+                    ", c.procurement_code AS 'Реестровый номер'"
                     ", cp.name AS 'Контрагент по договору'"
                     ", p.date AS 'Дата платежа'"
                     ", p.doc_number AS 'Номер платежа' "
