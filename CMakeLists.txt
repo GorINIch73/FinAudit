@@ -88,6 +88,7 @@ set(APP_SOURCES
     src/ImGuiFileDialog.cpp
     src/ImportManager.cpp
     src/ExportManager.cpp
+    src/OdsExporter.cpp
     src/PdfReporter.cpp
     src/pdfgen.c
     src/CustomWidgets.cpp

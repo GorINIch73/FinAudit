@@ -18,6 +18,7 @@ public:
     std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>> GetDataAsStrings() override;
 
 private:
+    std::string odsStatus;
     void ExecuteQuery();
     void PrintDataAsHtml();
 

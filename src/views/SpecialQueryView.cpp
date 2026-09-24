@@ -1,4 +1,5 @@
 #include "SpecialQueryView.h"
+#include "../OdsExporter.h"
 #include "../IconsFontAwesome6.h"
 #include "../PlatformUtils.h"
 #include <chrono>
@@ -407,6 +408,15 @@ void SpecialQueryView::Render() {
         if (ImGui::Button(ICON_FA_PRINT " Печать")) {
             PrintDataAsHtml();
         }
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(queryResult.columns.empty());
+        if (ImGui::Button(ICON_FA_FILE_EXCEL " Открыть ODS")) {
+            odsStatus = OdsExporter::Open(queryResult.columns, queryResult.rows,
+                                          queryResult.column_types);
+        }
+        ImGui::EndDisabled();
+        if (!odsStatus.empty()) ImGui::TextWrapped("%s", odsStatus.c_str());
 
         ImGui::Separator();
         ImGui::Text("Результат:");
