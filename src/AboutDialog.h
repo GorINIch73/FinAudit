@@ -1,5 +1,6 @@
 #pragma once
 
+#include "BuildInfo.h"
 #include "IconsFontAwesome6.h"
 #include "PlatformUtils.h"
 #include "imgui.h"
@@ -97,5 +98,5 @@ class AboutDialog {
 
     private:
         static constexpr const char *VERSION_NUMBER = "0.2";
-        static constexpr const char *BUILD_DATE = __DATE__ " " __TIME__;
+        static constexpr const char *BUILD_DATE = FINAUDIT_BUILD_DATE;
 };

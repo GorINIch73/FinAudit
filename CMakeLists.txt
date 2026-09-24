@@ -109,16 +109,28 @@ set(APP_SOURCES
     src/views/ExpenseStructureView.cpp
 )
 
+set(BUILD_INFO_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/BuildInfo.h")
+add_custom_target(generate_build_info ALL
+    COMMAND ${CMAKE_COMMAND}
+            -DOUTPUT_FILE=${BUILD_INFO_HEADER}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateBuildInfo.cmake
+    BYPRODUCTS ${BUILD_INFO_HEADER}
+    COMMENT "Updating build date"
+    VERBATIM
+)
+
 set_source_files_properties(src/pdfgen.c PROPERTIES LANGUAGE C)
 
 # Добавляем исполняемый файл
 add_executable(${PROJECT_NAME} ${APP_SOURCES})
+add_dependencies(${PROJECT_NAME} generate_build_info)
 
 # --- Подключение библиотек ---
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     src
     src/views
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
 )

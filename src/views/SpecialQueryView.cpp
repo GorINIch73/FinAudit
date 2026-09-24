@@ -189,6 +189,40 @@ std::string FormatCellForSpreadsheetCopy(
     return value;
 }
 
+std::string NormalizeTsvFieldForClipboard(const std::string& value) {
+    std::string normalized;
+    normalized.reserve(value.size());
+
+    bool replaced_separator = false;
+    for (char ch : value) {
+        if (ch == '\t' || ch == '\r' || ch == '\n') {
+            if (!replaced_separator && !normalized.empty() &&
+                normalized.back() != ' ') {
+                normalized.push_back(' ');
+            }
+            replaced_separator = true;
+            continue;
+        }
+        normalized.push_back(ch);
+        replaced_separator = false;
+    }
+    return normalized;
+}
+
+std::string QuoteTsvField(const std::string& value) {
+    std::string quoted;
+    quoted.reserve(value.size() + 2);
+    quoted.push_back('"');
+    for (char ch : value) {
+        if (ch == '"') {
+            quoted.push_back('"');
+        }
+        quoted.push_back(ch);
+    }
+    quoted.push_back('"');
+    return quoted;
+}
+
 std::string MakePrintableHtml(
     const std::string& title,
     const std::vector<std::string>& columns,
@@ -356,9 +390,13 @@ void SpecialQueryView::Render() {
                             j < queryResult.column_types.size()
                                 ? queryResult.column_types[j]
                                 : SQLITE_NULL;
-                        ss << FormatCellForSpreadsheetCopy(
-                            queryResult.rows[i][j], queryResult.columns[j],
-                            sqlite_type);
+                        const std::string cell = NormalizeTsvFieldForClipboard(
+                            FormatCellForSpreadsheetCopy(
+                                queryResult.rows[i][j], queryResult.columns[j],
+                                sqlite_type));
+                        ss << (IsSQLiteNumericType(sqlite_type)
+                                   ? cell
+                                   : QuoteTsvField(cell));
                     }
                     first_row = false;
                 }
