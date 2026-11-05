@@ -695,6 +695,35 @@ void KosguView::Render() {
 
             ImGui::BeginChild("PaymentDetails", ImVec2(0, 0), true);
             ImGui::Text("Расшифровки платежей:");
+            std::vector<float> fitted_payment_column_widths;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Подогнать по ширине строк")) {
+                const float padding =
+                    ImGui::GetStyle().CellPadding.x * 2.0f + 16.0f;
+                auto text_width = [padding](const std::string &text) {
+                    return ImGui::CalcTextSize(text.c_str()).x + padding;
+                };
+                fitted_payment_column_widths = {
+                    text_width("Дата"), text_width("Номер док."),
+                    text_width("Сумма"),
+                    text_width("Наименование контрагента"),
+                    text_width("Назначение")};
+                for (const auto &info : m_filtered_payment_info) {
+                    char amount[64];
+                    snprintf(amount, sizeof(amount), "%.2f", info.amount);
+                    fitted_payment_column_widths[0] = std::max(
+                        fitted_payment_column_widths[0], text_width(info.date));
+                    fitted_payment_column_widths[1] = std::max(
+                        fitted_payment_column_widths[1], text_width(info.doc_number));
+                    fitted_payment_column_widths[2] = std::max(
+                        fitted_payment_column_widths[2], text_width(amount));
+                    fitted_payment_column_widths[3] = std::max(
+                        fitted_payment_column_widths[3],
+                        text_width(info.counterparty_name));
+                    fitted_payment_column_widths[4] = std::max(
+                        fitted_payment_column_widths[4], text_width(info.description));
+                }
+            }
 
             if (filter_changed) {
                 std::vector<ContractPaymentInfo> details_to_show = payment_info;
@@ -765,7 +794,11 @@ void KosguView::Render() {
                                         260.0f);
                 ImGui::TableSetupColumn("Назначение",
                                         ImGuiTableColumnFlags_WidthFixed,
-                                        1200.0f);
+                                        1800.0f);
+                if (!fitted_payment_column_widths.empty()) {
+                    CustomWidgets::SetCurrentTableColumnWidths(
+                        fitted_payment_column_widths);
+                }
                 ImGui::TableHeadersRow();
 
                 if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {

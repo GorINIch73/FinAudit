@@ -1286,8 +1286,14 @@ void PaymentsView::Render() {
                 }
                 selectedRegexIdForCreatePopup = -1;
                 selected_regex_name = "";
-                editableRegexPatternForCreate[0] = '\0';
+                editableRegexPatternForCreate.clear();
                 regexFilterForCreatePopup[0] = '\0';
+                createRegexValid = false;
+                createRegexMatched = false;
+                createRegexHasCaptures = false;
+                createRegexStatus = "Выберите выражение для проверки.";
+                createRegexInputPreview.clear();
+                createRegexMatchParts.clear();
             }
             ImGui::EndDisabled();
 
@@ -1295,61 +1301,73 @@ void PaymentsView::Render() {
                 ImGui::OpenPopup("Создать из назначения платежа");
             }
 
+            ImGui::SetNextWindowSize(ImVec2(760.0f, 620.0f),
+                                     ImGuiCond_Appearing);
+            ImGui::SetNextWindowSizeConstraints(ImVec2(520.0f, 420.0f),
+                                                ImVec2(1100.0f, 900.0f));
             if (ImGui::BeginPopupModal("Создать из назначения платежа",
                                        &show_create_from_desc_popup,
-                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                                       ImGuiWindowFlags_None)) {
 
+                bool &regex_valid = createRegexValid;
+                bool &regex_matched = createRegexMatched;
+                bool &regex_has_captures = createRegexHasCaptures;
+                std::string &regex_status = createRegexStatus;
+                std::string &contract_regex_text = createRegexInputPreview;
+                std::vector<std::string> &regex_match_parts =
+                    createRegexMatchParts;
+                if (contract_regex_text.empty()) {
+                    contract_regex_text =
+                    prepare_payment_purpose_for_contract_regex(
+                        selectedPayment.description);
+                }
                 auto TestRegexAndExtract = [&](const char *pattern) {
-                    if (pattern[0] != '\0' && dbManager) {
-                        try {
-                            UnicodeRegex re(pattern);
-                            std::vector<std::string> match;
-                            const std::string contract_regex_text =
-                                prepare_payment_purpose_for_contract_regex(
-                                    selectedPayment.description);
-                            if (re.search(contract_regex_text, match) &&
-                                match.size() > 2) {
-                                extracted_number = match[1];
-                                extracted_date = match[2];
+                    regex_valid = false;
+                    regex_matched = false;
+                    regex_has_captures = false;
+                    regex_match_parts.clear();
+                    extracted_number.clear();
+                    extracted_date.clear();
+                    existing_entity_id = -1;
 
-                                extracted_number.erase(
-                                    extracted_number.find_last_not_of(
-                                        " \n\r\t") +
-                                    1);
-                                extracted_number.erase(
-                                    0, extracted_number.find_first_not_of(
-                                           " \n\r\t"));
-                                extracted_number =
-                                    normalize_contract_number_from_regex(
-                                        extracted_number);
-                                extracted_date.erase(
-                                    extracted_date.find_last_not_of(" \n\r\t") +
-                                    1);
-                                extracted_date.erase(
-                                    0, extracted_date.find_first_not_of(
-                                           " \n\r\t"));
-                                extracted_date =
-                                    normalize_contract_date_for_bank_dialog(
-                                        extracted_date);
+                    if (pattern[0] == '\0') {
+                        regex_status = "Введите регулярное выражение.";
+                        return;
+                    }
 
-                                if (entity_to_create == 0) {
-                                    existing_entity_id =
-                                        dbManager->getContractIdByNumberDate(
-                                            extracted_number, extracted_date);
-                                } else {
-                                    existing_entity_id = -1;
-                                }
+                    UnicodeRegex re(pattern);
+                    if (!re.isValid()) {
+                        regex_status = "Ошибка в выражении: " + re.error();
+                        return;
+                    }
+                    regex_valid = true;
 
-                            } else {
-                                extracted_number = "Не найдено";
-                                extracted_date = "Не найдено";
-                                existing_entity_id = -1;
-                            }
-                        } catch (const std::regex_error &e) {
-                            extracted_number = "Ошибка Regex";
-                            extracted_date = e.what();
-                            existing_entity_id = -1;
-                        }
+                    if (!re.search(contract_regex_text, regex_match_parts)) {
+                        regex_status = "Выражение корректно, совпадение не найдено.";
+                        return;
+                    }
+
+                    regex_matched = true;
+                    if (regex_match_parts.size() <= 2) {
+                        regex_status =
+                            "Совпадение найдено, но нет групп захвата 1 и 2. "
+                            "Группа 1 должна содержать номер, группа 2 — дату.";
+                        return;
+                    }
+
+                    regex_has_captures = true;
+                    regex_status = "Совпадение найдено; проверьте группы захвата ниже.";
+                    extracted_number = trim_bank_text(regex_match_parts[1]);
+                    extracted_number = normalize_contract_number_from_regex(
+                        extracted_number);
+                    extracted_date = trim_bank_text(regex_match_parts[2]);
+                    extracted_date = normalize_contract_date_for_bank_dialog(
+                        extracted_date);
+
+                    if (entity_to_create == 0) {
+                        existing_entity_id =
+                            dbManager->getContractIdByNumberDate(
+                                extracted_number, extracted_date);
                     }
                 };
 
@@ -1371,24 +1389,49 @@ void PaymentsView::Render() {
                             return r.id == selectedRegexIdForCreatePopup;
                         });
                     if (it != regexesForCreatePopup.end()) {
-                        strncpy(editableRegexPatternForCreate,
-                                it->pattern.c_str(),
-                                sizeof(editableRegexPatternForCreate) - 1);
-                        editableRegexPatternForCreate
-                            [sizeof(editableRegexPatternForCreate) - 1] = '\0';
-                        TestRegexAndExtract(editableRegexPatternForCreate);
+                        editableRegexPatternForCreate = it->pattern;
+                        TestRegexAndExtract(
+                            editableRegexPatternForCreate.c_str());
                         selected_regex_name = it->name;
                     }
                 }
 
-                if (ImGui::InputText("Шаблон Regex",
-                                     editableRegexPatternForCreate,
-                                     sizeof(editableRegexPatternForCreate))) {
-                    TestRegexAndExtract(editableRegexPatternForCreate);
+                ImGui::TextWrapped(
+                    "Шаблон: две группы захвата — группа 1 номер договора, "
+                    "группа 2 дата. Для вспомогательных групп используйте (?:...).");
+                if (CustomWidgets::InputTextMultilineWithWrap(
+                        "Шаблон Regex", &editableRegexPatternForCreate,
+                        ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 5))) {
+                    TestRegexAndExtract(
+                        editableRegexPatternForCreate.c_str());
                 }
 
+                const ImVec4 regex_status_color =
+                    !regex_valid || (regex_matched && !regex_has_captures)
+                        ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+                        : (regex_matched
+                               ? ImVec4(0.35f, 0.9f, 0.45f, 1.0f)
+                               : ImVec4(1.0f, 0.75f, 0.25f, 1.0f));
+                ImGui::TextColored(regex_status_color, "%s",
+                                   regex_status.c_str());
+                if (regex_matched && !regex_match_parts.empty()) {
+                    ImGui::TextWrapped("Полное совпадение: %s",
+                                       regex_match_parts[0].c_str());
+                    if (regex_match_parts.size() > 2) {
+                        ImGui::TextWrapped("Группа 1 (номер): %s",
+                                           regex_match_parts[1].c_str());
+                        ImGui::TextWrapped("Группа 2 (дата): %s",
+                                           regex_match_parts[2].c_str());
+                    }
+                }
+                if (ImGui::TreeNode("Текст для проверки после подготовки")) {
+                    ImGui::TextWrapped("%s", contract_regex_text.c_str());
+                    ImGui::TreePop();
+                }
+
+                ImGui::BeginDisabled(!regex_valid);
                 if (ImGui::Button("Сохранить как новый")) {
-                    if (editableRegexPatternForCreate[0] != '\0') {
+                    if (!editableRegexPatternForCreate.empty()) {
 
                         Regex newRegex;
                         newRegex.name = selected_regex_name;
@@ -1414,6 +1457,7 @@ void PaymentsView::Render() {
                         // show_save_regex_popup = true;
                     }
                 }
+                ImGui::EndDisabled();
 
                 ImGui::Separator();
 

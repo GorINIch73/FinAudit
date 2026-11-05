@@ -284,7 +284,7 @@ void RegexesView::Render() {
             if (ImGui::InputText("Имя", &selectedRegex.name)) {
                 isDirty = true;
             }
-            if (ImGui::InputTextMultiline(
+            if (CustomWidgets::InputTextMultilineWithWrap(
                     "Паттерн", &selectedRegex.pattern,
                     ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 8))) {
                 isDirty = true;

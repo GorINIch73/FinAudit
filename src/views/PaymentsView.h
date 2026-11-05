@@ -124,8 +124,14 @@ private:
     int existing_entity_id = -1;
     std::vector<Regex> regexesForCreatePopup;
     int selectedRegexIdForCreatePopup = -1;
-    char editableRegexPatternForCreate[4096] = "";
+    std::string editableRegexPatternForCreate;
     char regexFilterForCreatePopup[128] = "";
+    bool createRegexValid = false;
+    bool createRegexMatched = false;
+    bool createRegexHasCaptures = false;
+    std::string createRegexStatus = "Выберите выражение для проверки.";
+    std::string createRegexInputPreview;
+    std::vector<std::string> createRegexMatchParts;
     bool show_save_regex_popup = false;
     char newRegexNameBuffer[128] = "";
     const char* saveRegexStatusMsg = "";

@@ -136,6 +136,12 @@ bool InputTextMultilineWithWrap(const char *label, std::string *str,
     return changed;
 }
 
+void SetCurrentTableColumnWidths(const std::vector<float> &widths) {
+    for (int column = 0; column < static_cast<int>(widths.size()); ++column) {
+        ImGui::TableSetColumnWidth(column, widths[column]);
+    }
+}
+
 // кастомный виджет комбобокса с фильтром
 bool ComboWithFilter(const char *label, int &current_id,
                      std::vector<ComboItem> &items, char *search_buffer,

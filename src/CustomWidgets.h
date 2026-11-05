@@ -19,6 +19,7 @@ bool InputTextMultiline(const char *label, std::string *str,
 bool InputTextMultilineWithWrap(const char *label, std::string *str,
                                 const ImVec2 &size = ImVec2(0, 0),
                                 ImGuiInputTextFlags flags = 0);
+void SetCurrentTableColumnWidths(const std::vector<float> &widths);
 
 bool ComboWithFilter(const char *label, int &current_id,
                      std::vector<ComboItem> &items, char *search_buffer,
