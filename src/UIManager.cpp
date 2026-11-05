@@ -441,7 +441,7 @@ void UIManager::ApplyTheme(int theme_index) {
         colors[ImGuiCol_ButtonActive] = ImVec4(0.31f, 0.53f, 0.61f, 1.00f);
         colors[ImGuiCol_Tab] = ImVec4(0.16f, 0.18f, 0.20f, 1.00f);
         colors[ImGuiCol_TabHovered] = ImVec4(0.27f, 0.45f, 0.52f, 1.00f);
-        colors[ImGuiCol_TabActive] = ImVec4(0.22f, 0.34f, 0.40f, 1.00f);
+        colors[ImGuiCol_TabSelected] = ImVec4(0.22f, 0.34f, 0.40f, 1.00f);
         colors[ImGuiCol_CheckMark] = ImVec4(0.42f, 0.76f, 0.84f, 1.00f);
         colors[ImGuiCol_SliderGrab] = ImVec4(0.42f, 0.76f, 0.84f, 1.00f);
         colors[ImGuiCol_SliderGrabActive] = ImVec4(0.54f, 0.86f, 0.92f, 1.00f);
@@ -469,7 +469,7 @@ void UIManager::ApplyTheme(int theme_index) {
         colors[ImGuiCol_ButtonActive] = ImVec4(0.38f, 0.61f, 0.68f, 1.00f);
         colors[ImGuiCol_Tab] = ImVec4(0.13f, 0.18f, 0.23f, 1.00f);
         colors[ImGuiCol_TabHovered] = ImVec4(0.31f, 0.50f, 0.58f, 1.00f);
-        colors[ImGuiCol_TabActive] = ImVec4(0.22f, 0.35f, 0.42f, 1.00f);
+        colors[ImGuiCol_TabSelected] = ImVec4(0.22f, 0.35f, 0.42f, 1.00f);
         colors[ImGuiCol_CheckMark] = ImVec4(0.62f, 0.86f, 0.72f, 1.00f);
         colors[ImGuiCol_SliderGrab] = ImVec4(0.62f, 0.86f, 0.72f, 1.00f);
         colors[ImGuiCol_SliderGrabActive] = ImVec4(0.74f, 0.94f, 0.82f, 1.00f);
@@ -497,7 +497,7 @@ void UIManager::ApplyTheme(int theme_index) {
         colors[ImGuiCol_ButtonActive] = ImVec4(0.42f, 0.63f, 0.76f, 1.00f);
         colors[ImGuiCol_Tab] = ImVec4(0.82f, 0.87f, 0.91f, 1.00f);
         colors[ImGuiCol_TabHovered] = ImVec4(0.54f, 0.71f, 0.82f, 1.00f);
-        colors[ImGuiCol_TabActive] = ImVec4(0.67f, 0.79f, 0.88f, 1.00f);
+        colors[ImGuiCol_TabSelected] = ImVec4(0.67f, 0.79f, 0.88f, 1.00f);
         colors[ImGuiCol_CheckMark] = ImVec4(0.07f, 0.43f, 0.56f, 1.00f);
         colors[ImGuiCol_SliderGrab] = ImVec4(0.07f, 0.43f, 0.56f, 1.00f);
         colors[ImGuiCol_SliderGrabActive] = ImVec4(0.03f, 0.33f, 0.46f, 1.00f);
@@ -526,7 +526,7 @@ void UIManager::ApplyTheme(int theme_index) {
         colors[ImGuiCol_ButtonActive] = ImVec4(0.50f, 0.39f, 0.68f, 1.00f);
         colors[ImGuiCol_Tab] = ImVec4(0.12f, 0.13f, 0.18f, 1.00f);
         colors[ImGuiCol_TabHovered] = ImVec4(0.41f, 0.32f, 0.58f, 1.00f);
-        colors[ImGuiCol_TabActive] = ImVec4(0.27f, 0.22f, 0.39f, 1.00f);
+        colors[ImGuiCol_TabSelected] = ImVec4(0.27f, 0.22f, 0.39f, 1.00f);
         colors[ImGuiCol_CheckMark] = ImVec4(0.88f, 0.68f, 0.95f, 1.00f);
         colors[ImGuiCol_SliderGrab] = ImVec4(0.88f, 0.68f, 0.95f, 1.00f);
         colors[ImGuiCol_SliderGrabActive] = ImVec4(0.96f, 0.78f, 1.00f, 1.00f);
@@ -555,7 +555,7 @@ void UIManager::ApplyTheme(int theme_index) {
         colors[ImGuiCol_ButtonActive] = ImVec4(0.46f, 0.65f, 0.49f, 1.00f);
         colors[ImGuiCol_Tab] = ImVec4(0.12f, 0.18f, 0.14f, 1.00f);
         colors[ImGuiCol_TabHovered] = ImVec4(0.36f, 0.54f, 0.39f, 1.00f);
-        colors[ImGuiCol_TabActive] = ImVec4(0.24f, 0.36f, 0.27f, 1.00f);
+        colors[ImGuiCol_TabSelected] = ImVec4(0.24f, 0.36f, 0.27f, 1.00f);
         colors[ImGuiCol_CheckMark] = ImVec4(0.76f, 0.90f, 0.56f, 1.00f);
         colors[ImGuiCol_SliderGrab] = ImVec4(0.76f, 0.90f, 0.56f, 1.00f);
         colors[ImGuiCol_SliderGrabActive] = ImVec4(0.85f, 0.98f, 0.64f, 1.00f);
@@ -584,7 +584,7 @@ void UIManager::ApplyTheme(int theme_index) {
         colors[ImGuiCol_ButtonActive] = ImVec4(0.57f, 0.42f, 0.24f, 1.00f);
         colors[ImGuiCol_Tab] = ImVec4(0.88f, 0.82f, 0.70f, 1.00f);
         colors[ImGuiCol_TabHovered] = ImVec4(0.68f, 0.54f, 0.32f, 1.00f);
-        colors[ImGuiCol_TabActive] = ImVec4(0.78f, 0.65f, 0.43f, 1.00f);
+        colors[ImGuiCol_TabSelected] = ImVec4(0.78f, 0.65f, 0.43f, 1.00f);
         colors[ImGuiCol_CheckMark] = ImVec4(0.42f, 0.25f, 0.12f, 1.00f);
         colors[ImGuiCol_SliderGrab] = ImVec4(0.42f, 0.25f, 0.12f, 1.00f);
         colors[ImGuiCol_SliderGrabActive] = ImVec4(0.30f, 0.16f, 0.08f, 1.00f);
@@ -613,7 +613,7 @@ void UIManager::ApplyTheme(int theme_index) {
         colors[ImGuiCol_ButtonActive] = ImVec4(1.00f, 0.88f, 0.22f, 1.00f);
         colors[ImGuiCol_Tab] = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
         colors[ImGuiCol_TabHovered] = ImVec4(1.00f, 0.78f, 0.00f, 1.00f);
-        colors[ImGuiCol_TabActive] = ImVec4(0.78f, 0.58f, 0.00f, 1.00f);
+        colors[ImGuiCol_TabSelected] = ImVec4(0.78f, 0.58f, 0.00f, 1.00f);
         colors[ImGuiCol_CheckMark] = ImVec4(1.00f, 0.92f, 0.24f, 1.00f);
         colors[ImGuiCol_SliderGrab] = ImVec4(1.00f, 0.92f, 0.24f, 1.00f);
         colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 1.00f, 0.42f, 1.00f);
